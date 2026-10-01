@@ -1,0 +1,61 @@
+{
+  "name": "tidy-turns",
+  "version": "0.1.0",
+  "description": "Fold a finished turn's work away so only the answer shows, with a clickable summary under it",
+  "author": {
+    "name": "Brandon Murgic"
+  },
+  "license": "MIT",
+  "repository": "https://github.com/bmurgic/tidy-turns",
+  "types": "./types/index.d.ts",
+  "userConfig": {
+    "showToolCount": {
+      "type": "boolean",
+      "title": "Summary: tool call count",
+      "description": "Show how many tool calls the turn made",
+      "default": true
+    },
+    "showToolKinds": {
+      "type": "boolean",
+      "title": "Summary: kinds of tool calls",
+      "description": "Show the turn's tool calls by kind, such as 3 reads and 2 edits",
+      "default": false
+    },
+    "showSubagents": {
+      "type": "boolean",
+      "title": "Summary: subagents",
+      "description": "Show how many subagents the turn ran",
+      "default": false
+    },
+    "showFilesChanged": {
+      "type": "boolean",
+      "title": "Summary: files changed",
+      "description": "Show how many files the turn changed",
+      "default": false
+    },
+    "showFailures": {
+      "type": "boolean",
+      "title": "Summary: failed tool calls",
+      "description": "Show how many of the turn's tool calls failed or were denied",
+      "default": false
+    },
+    "showEndReason": {
+      "type": "boolean",
+      "title": "Summary: how the turn ended",
+      "description": "Show when a turn was interrupted, refused, or ended on an error",
+      "default": false
+    },
+    "showTokens": {
+      "type": "boolean",
+      "title": "Summary: tokens",
+      "description": "Show how many output tokens the turn used",
+      "default": false
+    },
+    "showModel": {
+      "type": "boolean",
+      "title": "Summary: model",
+      "description": "Show the model that answered",
+      "default": false
+    }
+  }
+}
