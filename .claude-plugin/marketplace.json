@@ -19,7 +19,7 @@
       "source": "./",
       "homepage": "https://github.com/bmurgic/tidy-turns",
       "category": "productivity",
-      "tags": ["terminal", "transcript", "summary", "ui"]
+      "tags": ["terminal", "transcript", "collapse", "fold", "summary", "tool-calls", "clean-output", "ui"]
     }
   ]
 }

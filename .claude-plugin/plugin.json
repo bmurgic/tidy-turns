@@ -11,6 +11,16 @@
   "documentationUrl": "https://github.com/bmurgic/tidy-turns#readme",
   "supportUrl": "https://github.com/bmurgic/tidy-turns/issues",
   "privacyPolicyUrl": "https://github.com/bmurgic/tidy-turns#privacy",
+  "keywords": [
+    "terminal",
+    "transcript",
+    "collapse",
+    "fold",
+    "summary",
+    "tool-calls",
+    "clean-output",
+    "ui"
+  ],
   "types": "./types/index.d.ts",
   "userConfig": {
     "showToolCount": {
