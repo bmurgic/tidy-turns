@@ -235,8 +235,8 @@ const ERROR_RED = 'error'
 // The details' hover: the text at full strength, never a block behind it.
 const DETAILS_HOVER = { dimColor: false, inverse: false }
 
-// The verb's hover: nothing changes under the pointer.
-const LEAD_HOVER = { inverse: false }
+// The verb's hover: Claude's orange under the pointer, never a block behind it.
+const LEAD_HOVER = { color: 'claude', inverse: false }
 
 // True while the ctrl+o transcript shows. No event says so; the person's prompt
 // row draws again with isExpanded set, so its hook records the view here (a
