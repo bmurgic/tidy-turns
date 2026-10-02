@@ -163,6 +163,10 @@ claude plugin tag . --push
 
 `tsconfig.json` reads the engine's type declarations from `.claude-plugin/types`. Claude Code generates that folder, and git ignores it.
 
+## Privacy
+
+tidy-turns collects nothing about you and sends nothing anywhere. The counts it shows, such as tool calls, files changed, and tokens, live only in the session's plugin state on your machine. Its debug lines go to Claude Code's own local debug log. The plugin makes no network requests, has no analytics, and keeps nothing in Claude Code's cross-session store.
+
 ## License
 
 MIT. See [LICENSE](LICENSE).
