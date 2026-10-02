@@ -11,7 +11,7 @@ Click the line to open a summary of the turn under it:
 
 ```
 ✻ Sautéed for 7s ▾
-├─ 3 tool calls · 1 command · 1 edit · 1 read
+├─ 3 tool calls · 1 command · 1 read
 ├─ 1 file changed
 ├─ 519 tokens · Haiku 4.5
 └─ 1 failed
@@ -53,7 +53,7 @@ Each summary item is a row in `/config`. Changing one reloads the plugin. Only t
 | Setting | Shows | Default |
 | --- | --- | --- |
 | `showToolCount` | How many tool calls the turn made | on |
-| `showToolKinds` | The calls by kind, such as `3 edits · 2 reads` | off |
+| `showToolKinds` | The calls by kind, such as `2 reads · 1 command`. Edits and subagent calls are left out while their own items are on. | off |
 | `showSubagents` | How many subagents the turn ran | off |
 | `showFilesChanged` | How many files the turn's edits changed | off |
 | `showFailures` | How many tool calls failed or were denied | off |

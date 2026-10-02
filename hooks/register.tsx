@@ -151,14 +151,15 @@ const KIND_PLURALS: Record<string, string> = {
 }
 
 // The turn's tool calls by kind, most first. With the subagent item on, the calls
-// that started subagents are left to it.
-const describeKinds = (toolNames: string[], isSubagentItemOn: boolean) => {
+// that started subagents are left to it; with the files changed item on, the edits.
+const describeKinds = (toolNames: string[], settings: Settings) => {
   const counts = new Map<string, number>()
 
   for (const name of toolNames) {
     const kind = TOOL_KINDS[name] ?? 'other'
+    const isLeftToItsItem = (settings.showSubagents && kind === 'agent') || (settings.showFilesChanged && kind === 'edit')
 
-    if (!(isSubagentItemOn && kind === 'agent')) {
+    if (!isLeftToItsItem) {
       counts.set(kind, (counts.get(kind) ?? 0) + 1)
     }
   }
@@ -195,7 +196,7 @@ const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
   const calls = turn.toolIds.length
   const activity = [
     settings.showToolCount && calls > 0 ? plural(calls, 'tool call', 'tool calls') : '',
-    ...(settings.showToolKinds ? describeKinds(turn.toolNames, settings.showSubagents) : []),
+    ...(settings.showToolKinds ? describeKinds(turn.toolNames, settings) : []),
     settings.showSubagents && turn.agentIds.length > 0 ? plural(turn.agentIds.length, 'agent', 'agents') : '',
   ]
   const changes = [

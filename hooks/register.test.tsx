@@ -328,7 +328,7 @@ describe('tidy-turns', () => {
     await answer.press({ key: 'tidy-turns:work' })
 
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
-    expect(await row('activity')).toBe('├─ 6 tool calls · 3 edits · 2 reads · 1 command · 1 agent')
+    expect(await row('activity')).toBe('├─ 6 tool calls · 2 reads · 1 command · 1 agent')
     expect(await row('changes')).toBe('├─ 2 files changed')
     expect(await row('usage')).toBe('├─ 1.2k tokens · Haiku 4.5')
     expect(await row('problems')).toBe('└─ 1 failed · interrupted')
@@ -336,6 +336,16 @@ describe('tidy-turns', () => {
     const drawn = JSON.stringify(await answer.drawn())
     const order = ['activity', 'changes', 'usage', 'problems'].map(group => drawn.indexOf(`tidy-turns:row:${group}`))
     expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))).toBe(true)
+  })
+
+  test('counts edits among the kinds only while files changed is off', { options: { ...ALL_ITEMS, showFilesChanged: false } }, async ($, on) => {
+    stubEngine(on)
+    await runRichTurn($, on, 's6')
+    const answer = await mountAnswer($, 'Stopped (s6).')
+    await answer.press({ key: 'tidy-turns:work' })
+
+    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('├─ 6 tool calls · 3 edits · 2 reads · 1 command · 1 agent')
+    expect(await answer.find({ key: 'tidy-turns:row:changes' })).toBeUndefined()
   })
 
   test('skips a group the turn has nothing for, and ends the tree on the last row', { options: ALL_ITEMS }, async ($, on) => {
