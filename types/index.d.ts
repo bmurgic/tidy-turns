@@ -31,7 +31,8 @@ declare module 'claude-code' {
       turns: Turns
       runningTurnId: string | null
       isFolding: boolean
-      isSummaryOpen: boolean
+      /** Turns whose summary is open, by turn id. */
+      openTurnIds: string[]
     }
   }
 }

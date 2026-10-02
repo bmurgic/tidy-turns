@@ -6,7 +6,7 @@ import type { Turn, Turns } from '../types'
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
 const runningTurnId = atom({ plugin: 'tidy-turns', key: 'runningTurnId' } as const, null)
 const isFolding = atom({ plugin: 'tidy-turns', key: 'isFolding' } as const, true)
-const isSummaryOpen = atom({ plugin: 'tidy-turns', key: 'isSummaryOpen' } as const, false)
+const openTurnIds = atom({ plugin: 'tidy-turns', key: 'openTurnIds' } as const, [])
 
 const EMPTY_TURN: Turn = { toolIds: [], toolNames: [], failedCount: 0, files: [], agentIds: [], outputTokens: 0, texts: [] }
 
@@ -86,8 +86,8 @@ const isFoldedText = (all: Turns, text: string) => {
 }
 
 // The latest finished turn whose final answer is this text block.
-const answeredTurn = (all: Turns, text: string) =>
-  finishedTurns(all).findLast(turn => turn.texts.at(-1) === text.trim())
+const answeredTurnId = (all: Turns, text: string) =>
+  Object.entries(all).findLast(([, turn]) => turn.durationMs !== undefined && turn.texts.at(-1) === text.trim())?.[0]
 
 const formatDuration = (durationMs: number) => {
   const seconds = Math.round(durationMs / 1000)
@@ -223,9 +223,9 @@ const joinItems = (items: string[]) => items.filter(item => item !== '').join(' 
 
 const describeVerb = (turn: Turn) => `${turn.verb ?? 'Worked'} for ${formatDuration(turn.durationMs ?? 0)}`
 
-// A click on the Worked for line opens or closes the summary under it.
-const toggleSummary = async ($: EngineInterface) => {
-  await update($, isSummaryOpen, isOpen => !isOpen)
+// A click on a Worked for line opens or closes that turn's summary alone.
+const toggleSummary = async ($: EngineInterface, turnId: string) => {
+  await update($, openTurnIds, ids => (ids.includes(turnId) ? ids.filter(id => id !== turnId) : [...ids, turnId]))
   $.ui.invalidate('ui.render')
 }
 
@@ -452,17 +452,18 @@ export const register: Register = (on, options) => {
       return <Box display="none" />
     }
 
-    const turn = answeredTurn(all, e.props.text)
+    const turnId = answeredTurnId(all, e.props.text)
+    const turn = turnId === undefined ? undefined : all[turnId]
 
-    if (turn === undefined) {
+    if (turnId === undefined || turn === undefined) {
       return next(e)
     }
 
     // The summary sits under the line as a tree a click opens and closes; the
     // work stays folded. A turn with no summary has nothing to open, so no arrow
     // and no click. Each row sits in a keyed Box, its own hover scope.
-    const isOpen = await read($, isSummaryOpen)
-    const toggle = () => toggleSummary($)
+    const isOpen = (await read($, openTurnIds)).includes(turnId)
+    const toggle = () => toggleSummary($, turnId)
     const groups = summaryGroups(turn, settings)
     const canOpen = groups.length > 0
 

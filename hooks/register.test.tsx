@@ -402,6 +402,23 @@ describe('tidy-turns', () => {
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▸')
   })
 
+  test('clicking one turn opens its summary alone', async ($, on) => {
+    stubEngine(on)
+    await runTurn($, 'p1')
+    await finishTurn($, 'p1')
+    await runTurn($, 'p2')
+    await finishTurn($, 'p2')
+    const first = await mountAnswer($, 'Found one file (p1).')
+    const second = await mountAnswer($, 'Found one file (p2).')
+
+    await first.press({ key: 'tidy-turns:lead' })
+
+    expect((await first.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
+    expect(await first.find({ key: 'tidy-turns:row:activity' })).toBeDefined()
+    expect((await second.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▸')
+    expect(await second.find({ key: 'tidy-turns:row:activity' })).toBeUndefined()
+  })
+
   test('releases each text block whole once it ends, not piece by piece', async ($, on) => {
     on('turn.step', async function* (_$, e) {
       yield { kind: 'text', index: 0, text: 'Checking ' }
