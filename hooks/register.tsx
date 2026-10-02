@@ -216,7 +216,7 @@ const countKind = (toolNames: string[], wanted: Kind) => {
   return count === 0 ? '' : plural(count, wanted.one, wanted.many)
 }
 
-const formatTokens = (tokens: number) => (tokens < 1000 ? `${tokens} tokens` : `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k tokens`)
+const formatTokens = (count: number) => (count < 1000 ? `${count} tokens` : `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k tokens`)
 
 // "claude-haiku-4-5-20251001" reads as "Haiku 4.5"; a name of another shape as given.
 const formatModel = (model: string) => {
@@ -517,9 +517,9 @@ export const register: Register = (on, options) => {
     const groups = summaryGroups(turn, settings)
     const canOpen = groups.length > 0
 
-    const clickable = (key: string, text: string) => (
-      <Box key={`${key}:scope`}>
-        <Button key={key} plain dimColor hover={DETAILS_HOVER} onPress={toggle}>
+    const clickable = (id: string, text: string) => (
+      <Box key={`${id}:scope`}>
+        <Button key={id} plain dimColor hover={DETAILS_HOVER} onPress={toggle}>
           {text}
         </Button>
       </Box>
