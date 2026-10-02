@@ -1,0 +1,25 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "tidy-turns",
+  "owner": {
+    "name": "Brandon Murgic",
+    "url": "https://github.com/bmurgic"
+  },
+  "metadata": {
+    "description": "The tidy-turns plugin for Claude Code"
+  },
+  "plugins": [
+    {
+      "name": "tidy-turns",
+      "description": "Fold a finished turn's work away so only the answer shows, with a clickable summary under it",
+      "version": "0.1.0",
+      "author": {
+        "name": "Brandon Murgic"
+      },
+      "source": "./",
+      "homepage": "https://github.com/bmurgic/tidy-turns",
+      "category": "productivity",
+      "tags": ["terminal", "transcript", "summary", "ui"]
+    }
+  ]
+}

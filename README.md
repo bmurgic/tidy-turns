@@ -25,30 +25,62 @@ While the summary is open, the line is bright and its star and tree are orange. 
 - Each finished turn's tool calls and notes fold away. The turn that is running still shows everything.
 - The `✻ Verb for 7s` line moves above the answer and replaces Claude Code's own line under it.
 - Replies appear whole when each text block ends, not word by word. This one applies on every surface, not only the terminal.
-- `/tidy-turns` turns folding off and on for the session.
-- The ctrl+o transcript always shows every row.
 
 The desktop app draws turns its own way, so the plugin folds nothing there.
 
 ## Install
 
-You need a Claude Code build that loads function-hook plugins (2.1.286 or later).
+You need a Claude Code build that loads function-hook plugins (2.1.286 or later). The repo is its own plugin marketplace.
 
-1. Clone the repo:
+1. In Claude Code, add the marketplace:
 
-   ```bash
-   git clone https://github.com/bmurgic/tidy-turns.git
+   ```
+   /plugin marketplace add bmurgic/tidy-turns
    ```
 
-2. Start Claude Code with the plugin folder:
+2. Install the plugin:
 
-   ```bash
-   claude --plugin-dir ./tidy-turns
+   ```
+   /plugin install tidy-turns@tidy-turns
    ```
 
-## Settings
+3. Start a new session.
 
-Each summary item is a row in `/config`. Changing one reloads the plugin. Only the tool call count is on by default.
+To do the same from a shell:
+
+```bash
+claude plugin marketplace add bmurgic/tidy-turns
+```
+
+```bash
+claude plugin install tidy-turns@tidy-turns
+```
+
+## Use it
+
+- **Read the answer.** When a turn finishes, its work folds away and the answer shows under a dim `✻ Verb for 7s ▸` line.
+- **Open the summary.** Click the line. The summary opens under that turn only, and the arrow turns to `▾`. Click the line or any summary row to close it. Each turn remembers its own state.
+- **Show the folded work.** Run `/tidy-turns` to turn folding off for the session, and run it again to turn folding back on. Press ctrl+o to see every row in the transcript view without changing anything.
+
+A turn with nothing to summarize shows `✻ Verb for 7s` with no arrow, and clicking it does nothing.
+
+## Change the settings
+
+Each summary item is a setting that you turn on or off. Only the tool call count is on by default.
+
+To change them in Claude Code, run:
+
+```
+/plugin configure tidy-turns@tidy-turns
+```
+
+To change them from a shell, pipe a JSON object of the settings to change. Write each value as the string `"true"` or `"false"`. Settings you leave out keep their values. Restart Claude Code to apply the change.
+
+```bash
+echo '{"showToolKinds":"true","showModel":"true","showTokens":"true"}' | claude plugin configure tidy-turns@tidy-turns --values-stdin
+```
+
+To see the current values, run `claude plugin configure tidy-turns@tidy-turns` with no input. To set values while you install, add `--config KEY=VALUE` to `claude plugin install`, once per setting.
 
 | Setting | Shows | Default |
 | --- | --- | --- |
@@ -65,18 +97,52 @@ Each summary item is a row in `/config`. Changing one reloads the plugin. Only t
 | `showToolSearches` | How many tool searches the turn made | off |
 | `showMcpCalls` | How many MCP tool calls the turn made | off |
 
-The summary puts each group of related items on its own row, in this order: activity (count, kinds, subagents), changes, session tools, usage (model, tokens, skills, tool searches, MCP calls), and problems in red. A group with nothing to show gets no row. A turn with no summary at all has no arrow and isn't clickable.
+The summary puts each group of related items on its own row, in this order: activity (count, kinds, subagents), changes, session tools, usage (model, tokens, skills, tool searches, MCP calls), and problems in red. A group with nothing to show gets no row.
+
+## Update or remove
+
+To get the latest release, refresh the marketplace, update the plugin, then restart Claude Code:
+
+```bash
+claude plugin marketplace update tidy-turns
+```
+
+```bash
+claude plugin update tidy-turns@tidy-turns
+```
+
+To remove it:
+
+```bash
+claude plugin uninstall tidy-turns@tidy-turns
+```
 
 ## Develop
 
-Run the tests and check the manifest from the repo folder:
+To try a working copy without installing it, start Claude Code with the folder:
+
+```bash
+claude --plugin-dir ./tidy-turns
+```
+
+Run the tests, then check the plugin manifest and the marketplace catalog, from the repo folder:
 
 ```bash
 claude plugin test .
 ```
 
 ```bash
-claude plugin validate .
+claude plugin validate --strict .claude-plugin/plugin.json
+```
+
+```bash
+claude plugin validate --strict .claude-plugin/marketplace.json
+```
+
+To release, raise `version` in both `.claude-plugin/plugin.json` and `.claude-plugin/marketplace.json`, commit, then tag and push the release:
+
+```bash
+claude plugin tag . --push
 ```
 
 `tsconfig.json` reads the engine's type declarations from `.claude-plugin/types`. Claude Code generates that folder, and git ignores it.
