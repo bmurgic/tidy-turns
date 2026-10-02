@@ -352,7 +352,7 @@ describe('tidy-turns', () => {
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
     expect(await row('activity')).toBe('├─ 6 tool calls · 2 reads · 1 command · 1 agent')
     expect(await row('changes')).toBe('├─ 2 files changed')
-    expect(await row('usage')).toBe('├─ 1.2k tokens · Haiku 4.5')
+    expect(await row('usage')).toBe('├─ Haiku 4.5 · 1.2k tokens')
     expect(await row('problems')).toBe('└─ 1 failed · interrupted')
 
     const drawn = JSON.stringify(await answer.drawn())

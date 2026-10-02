@@ -51,16 +51,16 @@
       "description": "Show when a turn was interrupted, refused, or ended on an error",
       "default": false
     },
-    "showTokens": {
-      "type": "boolean",
-      "title": "Summary: tokens",
-      "description": "Show how many output tokens the turn used",
-      "default": false
-    },
     "showModel": {
       "type": "boolean",
       "title": "Summary: model",
       "description": "Show the model that answered",
+      "default": false
+    },
+    "showTokens": {
+      "type": "boolean",
+      "title": "Summary: tokens",
+      "description": "Show how many output tokens the turn used",
       "default": false
     },
     "showSkills": {

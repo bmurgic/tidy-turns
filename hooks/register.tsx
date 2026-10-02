@@ -249,8 +249,8 @@ const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
   const changes = [settings.showFilesChanged && turn.files.length > 0 ? `${plural(turn.files.length, 'file', 'files')} changed` : '']
   const sessionTools = settings.showSessionTools ? describeKinds(turn.toolNames, toolKind => toolKind.item === 'showSessionTools') : []
   const usage = [
-    settings.showTokens && turn.outputTokens > 0 ? formatTokens(turn.outputTokens) : '',
     settings.showModel && turn.model !== undefined ? formatModel(turn.model) : '',
+    settings.showTokens && turn.outputTokens > 0 ? formatTokens(turn.outputTokens) : '',
     settings.showSkills ? countKind(turn.toolNames, SKILL) : '',
     settings.showToolSearches ? countKind(turn.toolNames, TOOL_SEARCH) : '',
     settings.showMcpCalls ? countKind(turn.toolNames, MCP_CALL) : '',
