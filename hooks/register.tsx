@@ -238,9 +238,9 @@ const DETAILS_HOVER = { dimColor: false, inverse: false }
 // The theme key of the orange Claude Code marks its spinner with.
 const CLAUDE_ORANGE = 'claude'
 
-// The Worked for line's hover: the whole line in Claude's orange and underlined,
-// never a block behind it.
-const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, underline: true, inverse: false }
+// The Worked for line's hover: the whole line in Claude's orange, never a block
+// behind it.
+const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, inverse: false }
 
 // True while the ctrl+o transcript shows. No event says so; the person's prompt
 // row draws again with isExpanded set, so its hook records the view here (a
