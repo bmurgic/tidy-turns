@@ -247,14 +247,13 @@ describe('tidy-turns', () => {
         component: 'AssistantMessage',
         props: textRow('Found one file (t5).'),
       })
-      const lead = await answer.find({
-        type: 'Button',
-        text: /^✻ [A-Z][a-zé]+ for 4s$/,
-      })
+      const lead = await answer.find({ type: 'Button', text: /^[A-Z][a-zé]+ for 4s$/ })
+      const line = await answer.find({ key: 'tidy-turns:line' })
       const details = await answer.find({ type: 'Button', text: ' ▸' })
       const body = await answer.find({ type: 'Text', text: 'engine row' })
 
       expect(lead !== undefined).toBe(isFoldingSurface)
+      expect(line?.text).toBe(isFoldingSurface ? `✻ ${lead?.text} ▸` : undefined)
       expect(details !== undefined).toBe(isFoldingSurface)
       expect(body !== undefined).toBe(true)
     })
@@ -329,10 +328,10 @@ describe('tidy-turns', () => {
     await answer.press({ key: 'tidy-turns:work' })
 
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
-    expect(await row('activity')).toBe('  ├ 6 tool calls · 3 edits · 2 reads · 1 command · 1 agent')
-    expect(await row('changes')).toBe('  ├ 2 files changed')
-    expect(await row('usage')).toBe('  ├ 1.2k tokens · Haiku 4.5')
-    expect(await row('problems')).toBe('  └ 1 failed · interrupted')
+    expect(await row('activity')).toBe('├─ 6 tool calls · 3 edits · 2 reads · 1 command · 1 agent')
+    expect(await row('changes')).toBe('├─ 2 files changed')
+    expect(await row('usage')).toBe('├─ 1.2k tokens · Haiku 4.5')
+    expect(await row('problems')).toBe('└─ 1 failed · interrupted')
 
     const drawn = JSON.stringify(await answer.drawn())
     const order = ['activity', 'changes', 'usage', 'problems'].map(group => drawn.indexOf(`tidy-turns:row:${group}`))
@@ -346,7 +345,7 @@ describe('tidy-turns', () => {
     const answer = await mountAnswer($, 'Found one file (s2).')
     await answer.press({ key: 'tidy-turns:work' })
 
-    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('  └ 1 tool call · 1 command')
+    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('└─ 1 tool call · 1 command')
     expect(await answer.find({ key: 'tidy-turns:row:changes' })).toBeUndefined()
     expect(await answer.find({ key: 'tidy-turns:row:problems' })).toBeUndefined()
     expect(await answer.find({ key: 'tidy-turns:row:usage' })).toBeUndefined()
@@ -358,7 +357,7 @@ describe('tidy-turns', () => {
     const answer = await mountAnswer($, 'Stopped (s3).')
     await answer.press({ key: 'tidy-turns:work' })
 
-    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('  └ 6 tool calls')
+    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('└─ 6 tool calls')
     expect(await answer.find({ key: 'tidy-turns:row:changes' })).toBeUndefined()
     expect(await answer.find({ key: 'tidy-turns:row:usage' })).toBeUndefined()
     expect(await answer.find({ key: 'tidy-turns:row:problems' })).toBeUndefined()
@@ -392,7 +391,7 @@ describe('tidy-turns', () => {
 
     await answer.press({ key: 'tidy-turns:lead' })
 
-    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('  └ 1 tool call')
+    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('└─ 1 tool call')
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
     expect(isHidden(await drawTool($, 't8-tool', 'terminal'))).toBe(true)
     expect(isHidden(await drawText($, 'Let me look (t8).', 'terminal'))).toBe(true)

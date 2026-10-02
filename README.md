@@ -11,14 +11,14 @@ Click the line to open a summary of the turn under it:
 
 ```
 ✻ Sautéed for 7s ▾
-  ├ 3 tool calls · 1 command · 1 edit · 1 read
-  ├ 1 file changed
-  ├ 519 tokens · Haiku 4.5
-  └ 1 failed
+├─ 3 tool calls · 1 command · 1 edit · 1 read
+├─ 1 file changed
+├─ 519 tokens · Haiku 4.5
+└─ 1 failed
 ⏺ Done.
 ```
 
-Click it again to close the summary. The folded work stays hidden either way.
+While the summary is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close the summary. The folded work stays hidden either way.
 
 ## What it changes
 

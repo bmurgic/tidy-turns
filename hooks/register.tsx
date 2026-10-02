@@ -221,7 +221,7 @@ const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
 
 const joinItems = (items: string[]) => items.filter(item => item !== '').join(' · ')
 
-const describeLead = (turn: Turn) => `✻ ${turn.verb ?? 'Worked'} for ${formatDuration(turn.durationMs ?? 0)}`
+const describeVerb = (turn: Turn) => `${turn.verb ?? 'Worked'} for ${formatDuration(turn.durationMs ?? 0)}`
 
 // A click on the Worked for line opens or closes the summary under it.
 const toggleSummary = async ($: EngineInterface) => {
@@ -235,8 +235,12 @@ const ERROR_RED = 'error'
 // The details' hover: the text at full strength, never a block behind it.
 const DETAILS_HOVER = { dimColor: false, inverse: false }
 
-// The verb's hover: Claude's orange under the pointer, never a block behind it.
-const LEAD_HOVER = { color: 'claude', inverse: false }
+// The theme key of the orange Claude Code marks its spinner with.
+const CLAUDE_ORANGE = 'claude'
+
+// The Worked for line's hover: the whole line in Claude's orange and underlined,
+// never a block behind it.
+const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, underline: true, inverse: false }
 
 // True while the ctrl+o transcript shows. No event says so; the person's prompt
 // row draws again with isExpanded set, so its hook records the view here (a
@@ -456,27 +460,37 @@ export const register: Register = (on, options) => {
 
     // The summary sits under the line as a tree a click opens and closes; the
     // work stays folded. A turn with no summary has nothing to open, so no arrow
-    // and no click. Each clickable part sits in a keyed Box, its own hover scope.
+    // and no click. Each row sits in a keyed Box, its own hover scope.
     const isOpen = await read($, isSummaryOpen)
     const toggle = () => toggleSummary($)
     const groups = summaryGroups(turn, settings)
     const canOpen = groups.length > 0
 
-    const clickable = (key: string, text: string, isDim: boolean) => (
+    const clickable = (key: string, text: string) => (
       <Box key={`${key}:scope`}>
-        <Button key={key} plain dimColor={isDim} hover={isDim ? DETAILS_HOVER : LEAD_HOVER} onPress={toggle}>
+        <Button key={key} plain dimColor hover={DETAILS_HOVER} onPress={toggle}>
           {text}
         </Button>
       </Box>
     )
 
+    // Closed, the line is dim. Open, it is bright and its star and tree are
+    // orange: a Button takes no color, so the star is a Text of its own. One
+    // keyed Box holds the line, so it lights as one under the pointer.
     const header = canOpen ? (
-      <Box>
-        {clickable('tidy-turns:lead', describeLead(turn), false)}
-        {clickable('tidy-turns:work', isOpen ? ' ▾' : ' ▸', true)}
+      <Box key="tidy-turns:line">
+        <Text color={isOpen ? CLAUDE_ORANGE : undefined} dimColor={!isOpen} hover={LINE_HOVER}>
+          ✻{' '}
+        </Text>
+        <Button key="tidy-turns:lead" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={toggle}>
+          {describeVerb(turn)}
+        </Button>
+        <Button key="tidy-turns:work" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={toggle}>
+          {isOpen ? ' ▾' : ' ▸'}
+        </Button>
       </Box>
     ) : (
-      <Text>{describeLead(turn)}</Text>
+      <Text dimColor>✻ {describeVerb(turn)}</Text>
     )
 
     const summary = (
@@ -485,11 +499,11 @@ export const register: Register = (on, options) => {
         {isOpen &&
           groups.map((group, index) => (
             <Box key={`tidy-turns:row:${group.name}`}>
-              <Text dimColor>{index === groups.length - 1 ? '  └ ' : '  ├ '}</Text>
+              <Text color={CLAUDE_ORANGE}>{index === groups.length - 1 ? '└─ ' : '├─ '}</Text>
               {group.name === 'problems' ? (
                 <Text color={ERROR_RED}>{group.text}</Text>
               ) : (
-                clickable(`tidy-turns:row-text:${group.name}`, group.text, true)
+                clickable(`tidy-turns:row-text:${group.name}`, group.text)
               )}
             </Box>
           ))}
