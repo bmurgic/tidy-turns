@@ -70,8 +70,7 @@ const TERMINAL = 'terminal'
 
 const finishedTurns = (all: Turns) => Object.values(all).filter(turn => turn.durationMs !== undefined)
 
-const isFoldedTool = (all: Turns, toolUseId: string) =>
-  finishedTurns(all).some(turn => turn.toolIds.includes(toolUseId))
+const isFoldedTool = (all: Turns, toolUseId: string) => finishedTurns(all).some(turn => turn.toolIds.includes(toolUseId))
 
 // A text block folds only when it belongs to a finished turn and is no turn's final
 // answer and no part of the running turn: a block whose text repeats elsewhere stays.
@@ -79,10 +78,7 @@ const isFoldedText = (all: Turns, text: string) => {
   const key = text.trim()
   const turnsWithText = Object.values(all).filter(turn => turn.texts.includes(key))
 
-  return (
-    turnsWithText.length > 0 &&
-    turnsWithText.every(turn => turn.durationMs !== undefined && turn.texts.at(-1) !== key)
-  )
+  return turnsWithText.length > 0 && turnsWithText.every(turn => turn.durationMs !== undefined && turn.texts.at(-1) !== key)
 }
 
 // The latest finished turn whose final answer is this text block.
@@ -104,8 +100,12 @@ type Settings = {
   showFilesChanged: boolean
   showFailures: boolean
   showEndReason: boolean
+  showSessionTools: boolean
   showTokens: boolean
   showModel: boolean
+  showSkills: boolean
+  showToolSearches: boolean
+  showMcpCalls: boolean
 }
 
 const readSettings = (options: PluginOptions): Settings => ({
@@ -115,62 +115,108 @@ const readSettings = (options: PluginOptions): Settings => ({
   showFilesChanged: options.showFilesChanged === true,
   showFailures: options.showFailures === true,
   showEndReason: options.showEndReason === true,
+  showSessionTools: options.showSessionTools === true,
   showTokens: options.showTokens === true,
   showModel: options.showModel === true,
+  showSkills: options.showSkills === true,
+  showToolSearches: options.showToolSearches === true,
+  showMcpCalls: options.showMcpCalls === true,
 })
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
 
-// Each tool's kind, as the summary counts them; any other tool is "other".
-const TOOL_KINDS: Record<string, string> = {
-  Read: 'read',
-  Grep: 'search',
-  Glob: 'search',
-  LS: 'search',
-  Edit: 'edit',
-  MultiEdit: 'edit',
-  Write: 'edit',
-  NotebookEdit: 'edit',
-  Bash: 'command',
-  BashOutput: 'command',
-  KillShell: 'command',
-  WebFetch: 'web lookup',
-  WebSearch: 'web lookup',
-  Agent: 'agent',
-  Task: 'agent',
+// A kind of tool call, as the summary counts it. A kind with an item of its own
+// is counted there while that item is on, and among the kinds while it is off.
+type Kind = { one: string; many: string; item?: keyof Settings }
+
+const kind = (one: string, many: string, item?: keyof Settings): Kind => ({ one, many, item })
+
+const SKILL = kind('skill', 'skills', 'showSkills')
+const TOOL_SEARCH = kind('tool search', 'tool searches', 'showToolSearches')
+const MCP_CALL = kind('MCP call', 'MCP calls', 'showMcpCalls')
+const OTHER = kind('other', 'other')
+
+const session = (one: string, many: string) => kind(one, many, 'showSessionTools')
+const SCHEDULE = session('schedule', 'schedules')
+const PLAN_MODE = session('plan mode', 'plan modes')
+const WORKTREE = session('worktree', 'worktrees')
+const PLUGIN_LOOKUP = session('plugin lookup', 'plugin lookups')
+
+// Each tool's kind. An MCP tool, named mcp__<server>__<tool>, is an MCP call;
+// any other tool not listed is "other".
+const TOOL_KINDS: Record<string, Kind> = {
+  Read: kind('read', 'reads'),
+  Grep: kind('search', 'searches'),
+  Glob: kind('search', 'searches'),
+  LS: kind('search', 'searches'),
+  Edit: kind('edit', 'edits', 'showFilesChanged'),
+  MultiEdit: kind('edit', 'edits', 'showFilesChanged'),
+  Write: kind('edit', 'edits', 'showFilesChanged'),
+  NotebookEdit: kind('edit', 'edits', 'showFilesChanged'),
+  Bash: kind('command', 'commands'),
+  BashOutput: kind('command', 'commands'),
+  KillShell: kind('command', 'commands'),
+  WebFetch: kind('web lookup', 'web lookups'),
+  WebSearch: kind('web lookup', 'web lookups'),
+  Agent: kind('agent', 'agents', 'showSubagents'),
+  Task: kind('agent', 'agents', 'showSubagents'),
+  Skill: SKILL,
+  ToolSearch: TOOL_SEARCH,
+  ListMcpResourcesTool: MCP_CALL,
+  ReadMcpResourceTool: MCP_CALL,
+  ReadMcpResourceDirTool: MCP_CALL,
+  Monitor: session('monitor', 'monitors'),
+  TaskStop: session('task stop', 'task stops'),
+  SendMessage: session('message', 'messages'),
+  ListAgents: session('agent list', 'agent lists'),
+  Workflow: session('workflow', 'workflows'),
+  CronCreate: SCHEDULE,
+  CronDelete: SCHEDULE,
+  CronList: SCHEDULE,
+  EnterPlanMode: PLAN_MODE,
+  ExitPlanMode: PLAN_MODE,
+  EnterWorktree: WORKTREE,
+  ExitWorktree: WORKTREE,
+  PushNotification: session('notification', 'notifications'),
+  RemoteTrigger: session('remote trigger', 'remote triggers'),
+  SendUserFile: session('file sent', 'files sent'),
+  TodoWrite: session('todo update', 'todo updates'),
+  AskUserQuestion: session('question', 'questions'),
+  ListPlugins: PLUGIN_LOOKUP,
+  SearchPlugins: PLUGIN_LOOKUP,
+  SuggestPluginInstall: PLUGIN_LOOKUP,
+  ListSkills: PLUGIN_LOOKUP,
+  SearchSkills: PLUGIN_LOOKUP,
+  SuggestSkills: PLUGIN_LOOKUP,
 }
 
-const KIND_PLURALS: Record<string, string> = {
-  read: 'reads',
-  search: 'searches',
-  edit: 'edits',
-  command: 'commands',
-  'web lookup': 'web lookups',
-  agent: 'agents',
-  other: 'other',
-}
+const kindOf = (toolName: string) => TOOL_KINDS[toolName] ?? (toolName.startsWith('mcp__') ? MCP_CALL : OTHER)
 
-// The turn's tool calls by kind, most first. With the subagent item on, the calls
-// that started subagents are left to it; with the files changed item on, the edits.
-const describeKinds = (toolNames: string[], settings: Settings) => {
-  const counts = new Map<string, number>()
+// The turn's tool calls of the kinds `isCounted` picks, by kind, most first.
+const describeKinds = (toolNames: string[], isCounted: (kind: Kind) => boolean) => {
+  const counts = new Map<string, { kind: Kind; count: number }>()
 
   for (const name of toolNames) {
-    const kind = TOOL_KINDS[name] ?? 'other'
-    const isLeftToItsItem = (settings.showSubagents && kind === 'agent') || (settings.showFilesChanged && kind === 'edit')
+    const toolKind = kindOf(name)
 
-    if (!isLeftToItsItem) {
-      counts.set(kind, (counts.get(kind) ?? 0) + 1)
+    if (isCounted(toolKind)) {
+      const count = (counts.get(toolKind.one)?.count ?? 0) + 1
+      counts.set(toolKind.one, { kind: toolKind, count })
     }
   }
 
-  return [...counts]
-    .sort(([kindA, countA], [kindB, countB]) => countB - countA || kindA.localeCompare(kindB))
-    .map(([kind, count]) => plural(count, kind, KIND_PLURALS[kind] ?? kind))
+  return [...counts.values()]
+    .sort((a, b) => b.count - a.count || a.kind.one.localeCompare(b.kind.one))
+    .map(({ kind: { one, many }, count }) => plural(count, one, many))
 }
 
-const formatTokens = (tokens: number) =>
-  tokens < 1000 ? `${tokens} tokens` : `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k tokens`
+const countKind = (toolNames: string[], wanted: Kind) => {
+  const count = toolNames.filter(name => kindOf(name) === wanted).length
+
+  return count === 0 ? '' : plural(count, wanted.one, wanted.many)
+}
+
+const formatTokens = (tokens: number) => (tokens < 1000 ? `${tokens} tokens` : `${(tokens / 1000).toFixed(1).replace(/\.0$/, '')}k tokens`)
 
 // "claude-haiku-4-5-20251001" reads as "Haiku 4.5"; a name of another shape as given.
 const formatModel = (model: string) => {
@@ -188,7 +234,7 @@ const formatModel = (model: string) => {
 
 const END_REASONS: Record<string, string> = { aborted: 'interrupted', refusal: 'refused', error: 'errored' }
 
-type SummaryGroup = { name: 'activity' | 'changes' | 'usage' | 'problems'; text: string }
+type SummaryGroup = { name: 'activity' | 'changes' | 'session' | 'usage' | 'problems'; text: string }
 
 // The summary's groups in the order they show, each the turned-on items it has
 // something for; a group with nothing is left out.
@@ -196,15 +242,18 @@ const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
   const calls = turn.toolIds.length
   const activity = [
     settings.showToolCount && calls > 0 ? plural(calls, 'tool call', 'tool calls') : '',
-    ...(settings.showToolKinds ? describeKinds(turn.toolNames, settings) : []),
+    // A kind whose own item is on is counted there instead.
+    ...(settings.showToolKinds ? describeKinds(turn.toolNames, toolKind => toolKind.item === undefined || !settings[toolKind.item]) : []),
     settings.showSubagents && turn.agentIds.length > 0 ? plural(turn.agentIds.length, 'agent', 'agents') : '',
   ]
-  const changes = [
-    settings.showFilesChanged && turn.files.length > 0 ? `${plural(turn.files.length, 'file', 'files')} changed` : '',
-  ]
+  const changes = [settings.showFilesChanged && turn.files.length > 0 ? `${plural(turn.files.length, 'file', 'files')} changed` : '']
+  const sessionTools = settings.showSessionTools ? describeKinds(turn.toolNames, toolKind => toolKind.item === 'showSessionTools') : []
   const usage = [
     settings.showTokens && turn.outputTokens > 0 ? formatTokens(turn.outputTokens) : '',
     settings.showModel && turn.model !== undefined ? formatModel(turn.model) : '',
+    settings.showSkills ? countKind(turn.toolNames, SKILL) : '',
+    settings.showToolSearches ? countKind(turn.toolNames, TOOL_SEARCH) : '',
+    settings.showMcpCalls ? countKind(turn.toolNames, MCP_CALL) : '',
   ]
   const problems = [
     settings.showFailures && turn.failedCount > 0 ? `${turn.failedCount} failed` : '',
@@ -213,6 +262,7 @@ const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
   const groups: SummaryGroup[] = [
     { name: 'activity', text: joinItems(activity) },
     { name: 'changes', text: joinItems(changes) },
+    { name: 'session', text: joinItems(sessionTools) },
     { name: 'usage', text: joinItems(usage) },
     { name: 'problems', text: joinItems(problems) },
   ]
@@ -422,8 +472,7 @@ export const register: Register = (on, options) => {
     const all = await read($, turns)
     const ids = e.props.calls.map(call => call.tool_use_id)
     const isEveryIdKnown = ids.every(id => id !== undefined)
-    const isFolded =
-      isEveryIdKnown && ids.every(id => isFoldedTool(all, id as string))
+    const isFolded = isEveryIdKnown && ids.every(id => isFoldedTool(all, id as string))
 
     if (!(await isFoldingNow($)) || e.props.isExpanded || e.props.isActive || !isFolded) {
       if (!isEveryIdKnown) {

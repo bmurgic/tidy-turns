@@ -202,6 +202,28 @@ const drawText = async ($: Engine, text: string, surface: Surface) =>
 
 const isHidden = (tree: RenderElement) => tree.type === 'Box' && tree.props?.display === 'none'
 
+// A turn of skill, tool search, MCP and session tool calls, and one read.
+const runToolingTurn = async ($: Engine, turnId: string) => {
+  // The kit types only this build's built-in tools; an MCP tool's name is the server's.
+  const call = (tool: string, id: string) =>
+    $.tool.call({ tool, tool_use_id: `${turnId}-${id}` } as unknown as Parameters<Engine['tool']['call']>[0])
+
+  await $.turn.start({ text: 'tidy up', turnId })
+  await appendText($, `${turnId}-a`, `Looking (${turnId}).`)
+  await call('Read', 'read')
+  await call('Skill', 'skill')
+  await call('ToolSearch', 'search-1')
+  await call('ToolSearch', 'search-2')
+  await call('mcp__context7__query-docs', 'mcp')
+  await call('Monitor', 'monitor')
+  await call('SendMessage', 'message-1')
+  await call('SendMessage', 'message-2')
+  await appendText($, `${turnId}-b`, `Tidied (${turnId}).`)
+  await $.turn.complete({ answer: `Tidied (${turnId}).`, durationMs: 4200, isAborted: false, turnId, reason: 'answer' })
+}
+
+const TOOLING_ITEMS = { showSessionTools: true, showSkills: true, showToolSearches: true, showMcpCalls: true }
+
 describe('tidy-turns', () => {
   for (const surface of SURFACES) {
     // The desktop wraps rows in its own chrome, so the mod folds on the terminal only.
@@ -338,15 +360,58 @@ describe('tidy-turns', () => {
     expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))).toBe(true)
   })
 
-  test('counts edits among the kinds only while files changed is off', { options: { ...ALL_ITEMS, showFilesChanged: false } }, async ($, on) => {
-    stubEngine(on)
-    await runRichTurn($, on, 's6')
-    const answer = await mountAnswer($, 'Stopped (s6).')
-    await answer.press({ key: 'tidy-turns:work' })
+  test(
+    'counts edits among the kinds only while files changed is off',
+    { options: { ...ALL_ITEMS, showFilesChanged: false } },
+    async ($, on) => {
+      stubEngine(on)
+      await runRichTurn($, on, 's6')
+      const answer = await mountAnswer($, 'Stopped (s6).')
+      await answer.press({ key: 'tidy-turns:work' })
 
-    expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe('├─ 6 tool calls · 3 edits · 2 reads · 1 command · 1 agent')
-    expect(await answer.find({ key: 'tidy-turns:row:changes' })).toBeUndefined()
-  })
+      expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe(
+        '├─ 6 tool calls · 3 edits · 2 reads · 1 command · 1 agent',
+      )
+      expect(await answer.find({ key: 'tidy-turns:row:changes' })).toBeUndefined()
+    },
+  )
+
+  test(
+    'puts session tools on a row of their own, and skills, tool searches and MCP calls with usage',
+    { options: { ...ALL_ITEMS, ...TOOLING_ITEMS } },
+    async ($, on) => {
+      stubEngine(on)
+      await runToolingTurn($, 'k1')
+      const answer = await mountAnswer($, 'Tidied (k1).')
+      await answer.press({ key: 'tidy-turns:work' })
+      const row = async (group: string) => (await answer.find({ key: `tidy-turns:row:${group}` }))?.text
+
+      expect(await row('activity')).toBe('├─ 8 tool calls · 1 read')
+      expect(await row('session')).toBe('├─ 2 messages · 1 monitor')
+      expect(await row('usage')).toBe('└─ 1 skill · 2 tool searches · 1 MCP call')
+
+      const drawn = JSON.stringify(await answer.drawn())
+      expect(
+        drawn.indexOf('tidy-turns:row:changes') === -1 && drawn.indexOf('tidy-turns:row:session') < drawn.indexOf('tidy-turns:row:usage'),
+      ).toBe(true)
+    },
+  )
+
+  test(
+    'counts skill, tool search, MCP and session tool calls among the kinds while their items are off',
+    { options: ALL_ITEMS },
+    async ($, on) => {
+      stubEngine(on)
+      await runToolingTurn($, 'k2')
+      const answer = await mountAnswer($, 'Tidied (k2).')
+      await answer.press({ key: 'tidy-turns:work' })
+
+      expect((await answer.find({ key: 'tidy-turns:row:activity' }))?.text).toBe(
+        '└─ 8 tool calls · 2 messages · 2 tool searches · 1 MCP call · 1 monitor · 1 read · 1 skill',
+      )
+      expect(await answer.find({ key: 'tidy-turns:row:session' })).toBeUndefined()
+    },
+  )
 
   test('skips a group the turn has nothing for, and ends the tree on the last row', { options: ALL_ITEMS }, async ($, on) => {
     stubEngine(on)

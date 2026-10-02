@@ -53,15 +53,19 @@ Each summary item is a row in `/config`. Changing one reloads the plugin. Only t
 | Setting | Shows | Default |
 | --- | --- | --- |
 | `showToolCount` | How many tool calls the turn made | on |
-| `showToolKinds` | The calls by kind, such as `2 reads · 1 command`. Edits and subagent calls are left out while their own items are on. | off |
+| `showToolKinds` | The calls by kind, such as `2 reads · 1 command`. A kind with its own item below is left out while that item is on. | off |
 | `showSubagents` | How many subagents the turn ran | off |
 | `showFilesChanged` | How many files the turn's edits changed | off |
+| `showSessionTools` | Session tool calls by kind, such as `2 messages · 1 monitor` | off |
 | `showFailures` | How many tool calls failed or were denied | off |
 | `showEndReason` | `interrupted`, `refused`, or `errored` when the turn did not end normally | off |
 | `showTokens` | The output tokens the turn used, its subagents' included | off |
 | `showModel` | The model that answered, such as `Haiku 4.5` | off |
+| `showSkills` | How many skills the turn loaded | off |
+| `showToolSearches` | How many tool searches the turn made | off |
+| `showMcpCalls` | How many MCP tool calls the turn made | off |
 
-The summary groups related items on one row each, in this order: activity (count, kinds, subagents), changes, usage (tokens, model), and problems in red. A group with nothing to show gets no row. A turn with no summary at all has no arrow and isn't clickable.
+The summary puts each group of related items on its own row, in this order: activity (count, kinds, subagents), changes, session tools, usage (tokens, model, skills, tool searches, MCP calls), and problems in red. A group with nothing to show gets no row. A turn with no summary at all has no arrow and isn't clickable.
 
 ## Develop
 

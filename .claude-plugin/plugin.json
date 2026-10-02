@@ -33,6 +33,12 @@
       "description": "Show how many files the turn changed",
       "default": false
     },
+    "showSessionTools": {
+      "type": "boolean",
+      "title": "Summary: session tools",
+      "description": "Show the turn's session tool calls, such as monitors and messages, on a row of their own",
+      "default": false
+    },
     "showFailures": {
       "type": "boolean",
       "title": "Summary: failed tool calls",
@@ -55,6 +61,24 @@
       "type": "boolean",
       "title": "Summary: model",
       "description": "Show the model that answered",
+      "default": false
+    },
+    "showSkills": {
+      "type": "boolean",
+      "title": "Summary: skills",
+      "description": "Show how many skills the turn loaded",
+      "default": false
+    },
+    "showToolSearches": {
+      "type": "boolean",
+      "title": "Summary: tool searches",
+      "description": "Show how many tool searches the turn made",
+      "default": false
+    },
+    "showMcpCalls": {
+      "type": "boolean",
+      "title": "Summary: MCP calls",
+      "description": "Show how many MCP tool calls the turn made",
       "default": false
     }
   }
