@@ -28,6 +28,22 @@ While the summary is open, the line is bright and its star and tree are orange. 
 
 The desktop app draws turns its own way, so the plugin folds nothing there.
 
+## What it hooks
+
+The plugin is one hooks module, `hooks/register.tsx`. It hooks these events:
+
+| Event | What the hook does |
+| --- | --- |
+| `session.start` | Registers the `/tidy-turns` command. |
+| `command.run` for `/tidy-turns` | Turns folding on or off for the session. |
+| `turn.start`, `turn.complete` | Starts a turn's record, then saves its duration, verb, and how it ended. |
+| `tool.call` | Counts the turn's tool calls by tool name, and notes which failed and which files an edit changed. It passes every call on unchanged and never makes a call of its own. |
+| `session.append` for responses | Records the text of each reply, so the plugin can tell working notes from the final answer. |
+| `turn.step` | Holds each reply's text until the block is whole, then passes it on. Adds each model request's output token count, and records the model name. |
+| `ui.render` | Draws the folded turn, the `✻ Verb for 7s` line, and the summary in the terminal. |
+
+Everything it records stays in the session's plugin state (`$.state`), and it writes debug lines to Claude Code's own debug log. The plugin makes no network requests, runs no programs, reads no files or environment variables, and asks for no credentials. "Tokens" in this README and in the `showTokens` setting means the model's output token count, not an access token.
+
 ## Install
 
 You need a Claude Code build that loads function-hook plugins (2.1.286 or later). The repo is its own plugin marketplace.
