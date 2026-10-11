@@ -28,7 +28,7 @@ export type Turn = {
   model?: string
   /** Every main-loop call of the turn's replies, in the order the model made them. */
   calls: LiveCall[]
-  /** True when the last block of the turn's replies was text, so the next call starts a new run. */
+  /** True when the last block of the turn's replies was text, or the person sent a message after it, so the next call starts a new run. */
   isAfterText: boolean
   /** Text blocks of the turn's replies, trimmed, in the order stored. */
   texts: string[]

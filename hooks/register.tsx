@@ -162,14 +162,16 @@ const withCallState = (calls: LiveCall[], id: string, state: LiveCall['state']) 
   calls.map(call => (call.id === id ? { ...call, state } : call))
 
 // One block of a model reply, in the order the model wrote it.
-type ReplyBlock = { kind: 'text'; text: string } | { kind: 'call'; id: string; tool: string; input: unknown }
+type ReplyBlock = { kind: 'text'; text: string } | { kind: 'call'; id: string; tool: string; input: unknown; isServerRun: boolean }
 
 // The turn with a reply's blocks added. A call starts a new run unless the call
 // before it came with no text between; a run is under a note when any text came
-// before it in the turn.
+// before it in the turn. A call the API ran itself, such as the advisor, fires no
+// tool.call, so it is done and counted here, in the reply that holds it.
 const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: string): Turn => {
   const texts = [...turn.texts]
   const calls = [...turn.calls]
+  const serverCalls = blocks.flatMap(block => (block.kind === 'call' && block.isServerRun ? [block] : []))
   let isAfterText = turn.isAfterText
 
   for (const block of blocks) {
@@ -187,12 +189,19 @@ const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: string): 
       target: callTarget(block.input, projectRoot),
       runId: isNewRun ? block.id : previous.runId,
       isNoted: texts.length > 0,
-      state: 'queued',
+      state: block.isServerRun ? 'done' : 'queued',
     })
     isAfterText = false
   }
 
-  return { ...turn, texts, calls, isAfterText }
+  return {
+    ...turn,
+    texts,
+    calls,
+    isAfterText,
+    toolIds: [...turn.toolIds, ...serverCalls.map(block => block.id)],
+    toolNames: [...turn.toolNames, ...serverCalls.map(block => block.tool)],
+  }
 }
 
 const replyBlocks = (content: unknown[]): ReplyBlock[] =>
@@ -203,7 +212,11 @@ const replyBlocks = (content: unknown[]): ReplyBlock[] =>
       return [{ kind: 'text', text: text.trim() }]
     }
 
-    return type === 'tool_use' && typeof id === 'string' && typeof name === 'string' ? [{ kind: 'call', id, tool: name, input }] : []
+    const isServerRun = type === 'server_tool_use'
+
+    return (type === 'tool_use' || isServerRun) && typeof id === 'string' && typeof name === 'string'
+      ? [{ kind: 'call', id, tool: name, input, isServerRun }]
+      : []
   })
 
 // The desktop app wraps each row in its own header and expander, so a hidden row
@@ -314,6 +327,7 @@ const TOOL_KINDS: Record<string, Kind> = {
   SendMessage: session('message', 'messages'),
   ListAgents: session('agent list', 'agent lists'),
   Workflow: session('workflow', 'workflows'),
+  advisor: session('advisor call', 'advisor calls'),
   CronCreate: SCHEDULE,
   CronDelete: SCHEDULE,
   CronList: SCHEDULE,
@@ -532,6 +546,19 @@ export const register: Register = (on, options) => {
 
     return next(e)
   })
+
+  // A message sent while the turn runs arrives as a queued_command attachment. It
+  // ends the run before it, so the next call opens a new row below the message
+  // instead of joining the one above.
+  for (const door of ['prompt', 'attachment'] as const) {
+    on('session.append', { door }, async ($, e, next) => {
+      if (e.agentId === undefined && (door === 'prompt' || e.message.name === 'queued_command')) {
+        await addToRunningTurn($, turn => ({ ...turn, isAfterText: true }))
+      }
+
+      return next(e)
+    })
+  }
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) {
