@@ -1,14 +1,15 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, PluginOptions, Register, ToolCallInput, ToolCallResult, TurnStepChunk, TurnStepResult } from 'claude-code'
 
-import type { Turn, Turns } from '../types'
+import type { LiveCall, Turn, Turns } from '../types'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
 const runningTurnId = atom({ plugin: 'tidy-turns', key: 'runningTurnId' } as const, null)
 const isFolding = atom({ plugin: 'tidy-turns', key: 'isFolding' } as const, true)
 const openTurnIds = atom({ plugin: 'tidy-turns', key: 'openTurnIds' } as const, [])
+const openRunIds = atom({ plugin: 'tidy-turns', key: 'openRunIds' } as const, [])
 
-const EMPTY_TURN: Turn = { toolIds: [], toolNames: [], failedCount: 0, files: [], agentIds: [], outputTokens: 0, texts: [] }
+const EMPTY_TURN: Turn = { toolIds: [], toolNames: [], failedCount: 0, files: [], agentIds: [], outputTokens: 0, calls: [], isAfterText: false, texts: [] }
 
 // Claude Code's own past-tense turn verbs, as its 2.1.286 build lists them.
 const VERBS = ['Baked', 'Brewed', 'Churned', 'Cogitated', 'Cooked', 'Crunched', 'Sautéed', 'Worked']
@@ -47,6 +48,98 @@ const editedFile = (e: ToolCallInput) => {
 
 const isFailed = (result: ToolCallResult) => result.deny !== undefined || result.isError === true
 
+// The input field that says what a call works on, in the order they are tried: a
+// Bash call has a command and a description, and the command is the one to show.
+const TARGET_FIELDS = ['file_path', 'notebook_path', 'command', 'pattern', 'url', 'query', 'description', 'skill']
+
+const MAX_TARGET_LENGTH = 200
+
+const PATH_FIELDS = ['file_path', 'notebook_path']
+
+// A file as `~/project/name`: the folder the session's project root sits in, or for
+// a file outside the project the folder the file sits in, then the file's name.
+const fileLabel = (path: string, projectRoot: string) => {
+  const segments = path.split('/').filter(segment => segment !== '')
+  const name = segments.at(-1) ?? path
+  const isInProject = !path.startsWith('/') || (projectRoot !== '' && path.startsWith(`${projectRoot}/`))
+  const folder = isInProject ? projectRoot.split('/').filter(segment => segment !== '').at(-1) : segments.at(-2)
+
+  return folder === undefined ? name : `~/${folder}/${name}`
+}
+
+// Absolute paths inside a command or pattern, in the style of fileLabel: the project
+// root as `~/project`, and any other home folder as `~`.
+const HOME_FOLDER = /\/(?:Users|home)\/[^/\s"']+/g
+
+const shortenPaths = (text: string, projectRoot: string) => {
+  const project = projectRoot.split('/').filter(segment => segment !== '').at(-1)
+  const withProject = projectRoot === '' || project === undefined ? text : text.replaceAll(projectRoot, `~/${project}`)
+
+  return withProject.replace(HOME_FOLDER, '~')
+}
+
+// What a call works on, as one short line: the first line of the field
+// TARGET_FIELDS picks, cut to MAX_TARGET_LENGTH; empty when the input has none.
+const callTarget = (input: unknown, projectRoot: string) => {
+  if (typeof input !== 'object' || input === null) {
+    return ''
+  }
+
+  const fields: Record<string, unknown> = { ...input }
+  const field = TARGET_FIELDS.find(name => typeof fields[name] === 'string')
+  const value = field === undefined ? '' : String(fields[field])
+  const isPath = field !== undefined && PATH_FIELDS.includes(field)
+  const firstLine = isPath ? fileLabel(value, projectRoot) : shortenPaths(value.split('\n')[0]?.trim() ?? '', projectRoot)
+
+  return firstLine.length > MAX_TARGET_LENGTH ? `${firstLine.slice(0, MAX_TARGET_LENGTH - 1)}…` : firstLine
+}
+
+// Cells the row leaves free at the right edge; a line never reaches it.
+const ROW_MARGIN = 4
+
+const DEFAULT_COLUMNS = 80
+
+const MIN_LINE_LENGTH = 12
+
+// A line cut with a … so it and its suffix fit in one row of the terminal, never wrapping.
+const fitLine = (line: string, suffix: string, columns: number) => {
+  const room = Math.max(columns - ROW_MARGIN - suffix.length, MIN_LINE_LENGTH)
+
+  return `${line.length > room ? `${line.slice(0, room - 1)}…` : line}${suffix}`
+}
+
+// The calls of a run that are not failed: a failed call has a red line of its own.
+const runCalls = (all: Turns, call: LiveCall) =>
+  Object.values(all)
+    .flatMap(turn => turn.calls)
+    .filter(other => other.runId === call.runId && other.state !== 'failed')
+
+const findCall = (all: Turns, toolUseId: string) =>
+  Object.values(all)
+    .flatMap(turn => turn.calls)
+    .find(call => call.id === toolUseId)
+
+// The calls a run's row shows: all of them once opened; closed, the ones running
+// now, or the latest call to start when none is.
+const shownCalls = (run: LiveCall[], isOpen: boolean) => {
+  const running = run.filter(call => call.state === 'running')
+  const latest = run.findLast(call => call.state !== 'queued') ?? run[0]
+
+  if (isOpen) {
+    return run
+  }
+
+  return running.length > 0 ? running : latest === undefined ? [] : [latest]
+}
+
+// A call's line: after a note it hangs under it with ⎿, and with none before it
+// the line is its own, led by the reply bullet. Later lines of a row line up under the first.
+const describeCall = (call: LiveCall, isFirstLine: boolean) => {
+  const lead = call.isNoted ? (isFirstLine ? '  ⎿ ' : '    ') : isFirstLine ? '⏺ ' : '  '
+
+  return `${lead}${[call.tool, call.target].filter(part => part !== '').join(' ')}`
+}
+
 // Records one tool call into the running turn once it ends: the main loop's calls by
 // id, tool and outcome, a subagent's by its id, and the file any edit that worked changed.
 const recordToolCall = async ($: EngineInterface, e: ToolCallInput, result: ToolCallResult) => {
@@ -61,8 +154,57 @@ const recordToolCall = async ($: EngineInterface, e: ToolCallInput, result: Tool
     failedCount: turn.failedCount + (isMainLoop && isFailedCall ? 1 : 0),
     agentIds: e.agentId === undefined ? turn.agentIds : addOnce(turn.agentIds, e.agentId),
     files: file === undefined ? turn.files : addOnce(turn.files, file),
+    calls: isMainLoop ? withCallState(turn.calls, e.tool_use_id, isFailedCall ? 'failed' : 'done') : turn.calls,
   }))
 }
+
+const withCallState = (calls: LiveCall[], id: string, state: LiveCall['state']) =>
+  calls.map(call => (call.id === id ? { ...call, state } : call))
+
+// One block of a model reply, in the order the model wrote it.
+type ReplyBlock = { kind: 'text'; text: string } | { kind: 'call'; id: string; tool: string; input: unknown }
+
+// The turn with a reply's blocks added. A call starts a new run unless the call
+// before it came with no text between; a run is under a note when any text came
+// before it in the turn.
+const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: string): Turn => {
+  const texts = [...turn.texts]
+  const calls = [...turn.calls]
+  let isAfterText = turn.isAfterText
+
+  for (const block of blocks) {
+    if (block.kind === 'text') {
+      texts.push(block.text)
+      isAfterText = true
+      continue
+    }
+
+    const previous = calls.at(-1)
+    const isNewRun = previous === undefined || isAfterText
+    calls.push({
+      id: block.id,
+      tool: block.tool,
+      target: callTarget(block.input, projectRoot),
+      runId: isNewRun ? block.id : previous.runId,
+      isNoted: texts.length > 0,
+      state: 'queued',
+    })
+    isAfterText = false
+  }
+
+  return { ...turn, texts, calls, isAfterText }
+}
+
+const replyBlocks = (content: unknown[]): ReplyBlock[] =>
+  content.flatMap((block): ReplyBlock[] => {
+    const { type, text, id, name, input } = block as Record<string, unknown>
+
+    if (type === 'text' && typeof text === 'string' && text.trim().length > 0) {
+      return [{ kind: 'text', text: text.trim() }]
+    }
+
+    return type === 'tool_use' && typeof id === 'string' && typeof name === 'string' ? [{ kind: 'call', id, tool: name, input }] : []
+  })
 
 // The desktop app wraps each row in its own header and expander, so a hidden row
 // there leaves the header over a blank body. The row hooks match the terminal only.
@@ -94,6 +236,7 @@ const formatDuration = (durationMs: number) => {
 
 // Which summary items the person turned on, from the manifest's userConfig.
 type Settings = {
+  compactLiveCalls: boolean
   showToolCount: boolean
   showToolKinds: boolean
   showSubagents: boolean
@@ -109,18 +252,19 @@ type Settings = {
 }
 
 const readSettings = (options: PluginOptions): Settings => ({
+  compactLiveCalls: options.compactLiveCalls !== false,
   showToolCount: options.showToolCount !== false,
-  showToolKinds: options.showToolKinds === true,
-  showSubagents: options.showSubagents === true,
-  showFilesChanged: options.showFilesChanged === true,
-  showFailures: options.showFailures === true,
-  showEndReason: options.showEndReason === true,
-  showSessionTools: options.showSessionTools === true,
-  showTokens: options.showTokens === true,
-  showModel: options.showModel === true,
-  showSkills: options.showSkills === true,
-  showToolSearches: options.showToolSearches === true,
-  showMcpCalls: options.showMcpCalls === true,
+  showToolKinds: options.showToolKinds !== false,
+  showSubagents: options.showSubagents !== false,
+  showFilesChanged: options.showFilesChanged !== false,
+  showFailures: options.showFailures !== false,
+  showEndReason: options.showEndReason !== false,
+  showSessionTools: options.showSessionTools !== false,
+  showTokens: options.showTokens !== false,
+  showModel: options.showModel !== false,
+  showSkills: options.showSkills !== false,
+  showToolSearches: options.showToolSearches !== false,
+  showMcpCalls: options.showMcpCalls !== false,
 })
 
 const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
@@ -280,6 +424,12 @@ const toggleSummary = async ($: EngineInterface, turnId: string) => {
   $.ui.invalidate('ui.render')
 }
 
+// A click on a run's row opens it to every call, or closes it again.
+const toggleRun = async ($: EngineInterface, runId: string) => {
+  await update($, openRunIds, ids => (ids.includes(runId) ? ids.filter(id => id !== runId) : [...ids, runId]))
+  $.ui.invalidate('ui.render')
+}
+
 // The theme key Claude Code draws errors in, for the problems group.
 const ERROR_RED = 'error'
 
@@ -357,20 +507,26 @@ export const register: Register = (on, options) => {
   })
 
   on('tool.call', async ($, e, next) => {
+    if (e.agentId === undefined) {
+      await addToRunningTurn($, turn => ({ ...turn, calls: withCallState(turn.calls, e.tool_use_id, 'running') }))
+      $.ui.invalidate('ui.render')
+    }
+
     const result = await next(e)
     await recordToolCall($, e, result)
+    $.ui.invalidate('ui.render')
 
     return result
   })
 
   on('session.append', { door: 'response' }, async ($, e, next) => {
     if (e.agentId === undefined && Array.isArray(e.message.content)) {
-      const texts = e.message.content
-        .map(block => (block.type === 'text' && typeof block.text === 'string' ? block.text.trim() : ''))
-        .filter(text => text.length > 0)
+      const blocks = replyBlocks(e.message.content)
 
-      if (texts.length > 0) {
-        await addToRunningTurn($, turn => ({ ...turn, texts: [...turn.texts, ...texts] }))
+      if (blocks.length > 0) {
+        const projectRoot = await $.session.root().catch(() => '')
+        await addToRunningTurn($, turn => addReplyBlocks(turn, blocks, projectRoot))
+        $.ui.invalidate('ui.render')
       }
     }
 
@@ -443,23 +599,74 @@ export const register: Register = (on, options) => {
     return next(e)
   })
 
+  // A finished turn's calls fold away. The calls of the running turn between two
+  // notes share one row, which shows the call running now and opens on a click to
+  // every call. A call that failed or was cut short gets a red line of its own, so
+  // a problem never hides in the row; its output is never drawn.
   on('ui.render', { component: 'ToolUse', surface: TERMINAL }, async ($, e, next) => {
     const all = await read($, turns)
 
-    if (!(await isFoldingNow($)) || !isFoldedTool(all, e.props.tool_use_id)) {
+    if (!(await isFoldingNow($))) {
       return next(e)
     }
 
-    const { Box } = $.ui.resolve(e)
-    debug($, `fold ToolUse ${e.props.tool} ${e.props.tool_use_id} on ${e.surface}`)
+    const { Box, Button, Text } = $.ui.resolve(e)
+    const columns = e.viewport?.columns ?? DEFAULT_COLUMNS
 
-    return <Box display="none" />
+    if (isFoldedTool(all, e.props.tool_use_id)) {
+      debug($, `fold ToolUse ${e.props.tool} ${e.props.tool_use_id} on ${e.surface}`)
+
+      return <Box display="none" />
+    }
+
+    const call = findCall(all, e.props.tool_use_id)
+
+    if (!settings.compactLiveCalls || call === undefined) {
+      return next(e)
+    }
+
+    if (call.state === 'failed' || e.props.isErrored || e.props.isInterrupted) {
+      return (
+        <Box marginTop={call.isNoted ? 0 : 1}>
+          <Text color={ERROR_RED}>{fitLine(describeCall(call, true), e.props.isInterrupted ? ' · interrupted' : ' · failed', columns)}</Text>
+        </Box>
+      )
+    }
+
+    const run = runCalls(all, call)
+
+    if (run[0]?.id !== call.id) {
+      return <Box display="none" />
+    }
+
+    const isOpen = (await read($, openRunIds)).includes(call.runId)
+    const toggle = () => toggleRun($, call.runId)
+    // A run under a note sits against it; one with no note is set off by a blank line.
+    const note = run.length === 1 ? '' : isOpen ? ' ▾' : ` ▸ ${run.length} calls`
+
+    return (
+      <Box flexDirection="column" alignSelf="flex-start" marginTop={call.isNoted ? 0 : 1}>
+        {shownCalls(run, isOpen).map((shown, index) => (
+          <Box key={`tidy-turns:call:${shown.id}:scope`}>
+            <Button key={`tidy-turns:call:${shown.id}`} plain dimColor hover={DETAILS_HOVER} onPress={toggle}>
+              <Text>{fitLine(describeCall(shown, index === 0), index === 0 ? note : '', columns)}</Text>
+            </Button>
+          </Box>
+        ))}
+      </Box>
+    )
   })
 
+  // The one line stands for the call, so its result draws nothing, an error's
+  // text included.
   on('ui.render', { component: 'ToolResult', surface: TERMINAL }, async ($, e, next) => {
     const all = await read($, turns)
 
-    if (!(await isFoldingNow($)) || !isFoldedTool(all, e.props.tool_use_id)) {
+    if (!(await isFoldingNow($))) {
+      return next(e)
+    }
+
+    if (!isFoldedTool(all, e.props.tool_use_id) && !settings.compactLiveCalls) {
       return next(e)
     }
 
@@ -468,23 +675,48 @@ export const register: Register = (on, options) => {
     return <Box display="none" />
   })
 
+  // The hint under a running call, such as "ctrl+b to run in background", is output
+  // the one line leaves out.
+  on('ui.render', { component: 'ToolProgress', surface: TERMINAL }, async ($, e, next) => {
+    const all = await read($, turns)
+
+    if (!(await isFoldingNow($)) || !(settings.compactLiveCalls || isFoldedTool(all, e.props.tool_use_id))) {
+      return next(e)
+    }
+
+    const { Box } = $.ui.resolve(e)
+
+    return <Box display="none" />
+  })
+
+  // A run of reads and searches folds into one count line; a live run opens into
+  // one ToolUse row per call, so each gets its own line. A finished turn's run
+  // folds away. A run with a call the plugin cannot place keeps the engine's row.
   on('ui.render', { component: 'ToolGroup', surface: TERMINAL }, async ($, e, next) => {
     const all = await read($, turns)
     const ids = e.props.calls.map(call => call.tool_use_id)
     const isEveryIdKnown = ids.every(id => id !== undefined)
     const isFolded = isEveryIdKnown && ids.every(id => isFoldedTool(all, id as string))
 
-    if (!(await isFoldingNow($)) || e.props.isExpanded || e.props.isActive || !isFolded) {
-      if (!isEveryIdKnown) {
-        debug($, `ToolGroup on ${e.surface} has calls without tool_use_id`)
-      }
+    if (!isEveryIdKnown) {
+      debug($, `ToolGroup on ${e.surface} has calls without tool_use_id`)
+    }
 
+    if (!(await isFoldingNow($)) || e.props.isExpanded) {
       return next(e)
     }
 
-    const { Box } = $.ui.resolve(e)
+    if (isFolded && !e.props.isActive) {
+      const { Box } = $.ui.resolve(e)
 
-    return <Box display="none" />
+      return <Box display="none" />
+    }
+
+    if (isEveryIdKnown && !isFolded && settings.compactLiveCalls) {
+      return next({ ...e, props: { ...e.props, isExpanded: true } })
+    }
+
+    return next(e)
   })
 
   on('ui.render', { component: 'AssistantMessage', surface: TERMINAL }, async ($, e, next) => {
