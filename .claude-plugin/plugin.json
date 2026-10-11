@@ -23,6 +23,12 @@
   ],
   "types": "./types/index.d.ts",
   "userConfig": {
+    "compactLiveCalls": {
+      "type": "boolean",
+      "title": "Live view: one line per tool call",
+      "description": "While a turn runs, draw each tool call as one line, such as ⎿ Edit src/app.rs, under the note before it",
+      "default": true
+    },
     "showToolCount": {
       "type": "boolean",
       "title": "Summary: tool call count",
@@ -33,67 +39,67 @@
       "type": "boolean",
       "title": "Summary: kinds of tool calls",
       "description": "Show the turn's tool calls by kind, such as 3 reads and 2 edits",
-      "default": false
+      "default": true
     },
     "showSubagents": {
       "type": "boolean",
       "title": "Summary: subagents",
       "description": "Show how many subagents the turn ran",
-      "default": false
+      "default": true
     },
     "showFilesChanged": {
       "type": "boolean",
       "title": "Summary: files changed",
       "description": "Show how many files the turn changed",
-      "default": false
+      "default": true
     },
     "showSessionTools": {
       "type": "boolean",
       "title": "Summary: session tools",
       "description": "Show the turn's session tool calls, such as monitors and messages, on a row of their own",
-      "default": false
+      "default": true
     },
     "showFailures": {
       "type": "boolean",
       "title": "Summary: failed tool calls",
       "description": "Show how many of the turn's tool calls failed or were denied",
-      "default": false
+      "default": true
     },
     "showEndReason": {
       "type": "boolean",
       "title": "Summary: how the turn ended",
       "description": "Show when a turn was interrupted, refused, or ended on an error",
-      "default": false
+      "default": true
     },
     "showModel": {
       "type": "boolean",
       "title": "Summary: model",
       "description": "Show the model that answered",
-      "default": false
+      "default": true
     },
     "showTokens": {
       "type": "boolean",
       "title": "Summary: tokens",
       "description": "Show how many output tokens the turn used",
-      "default": false
+      "default": true
     },
     "showSkills": {
       "type": "boolean",
       "title": "Summary: skills",
       "description": "Show how many skills the turn loaded",
-      "default": false
+      "default": true
     },
     "showToolSearches": {
       "type": "boolean",
       "title": "Summary: tool searches",
       "description": "Show how many tool searches the turn made",
-      "default": false
+      "default": true
     },
     "showMcpCalls": {
       "type": "boolean",
       "title": "Summary: MCP calls",
       "description": "Show how many MCP tool calls the turn made",
-      "default": false
+      "default": true
     }
   }
 }

@@ -1,3 +1,16 @@
+/** One main-loop tool call, as the live view draws it. */
+export type LiveCall = {
+  id: string
+  tool: string
+  /** What the call works on, as one short line; empty when the input names nothing. */
+  target: string
+  /** The `id` of the first call of the run this call belongs to: the calls between two notes. */
+  runId: string
+  /** True when a text block of the turn came before the run, so the run sits under a note. */
+  isNoted: boolean
+  state: 'queued' | 'running' | 'done' | 'failed'
+}
+
 export type Turn = {
   /** Tool calls the turn's main loop made, by `tool_use_id`. */
   toolIds: string[]
@@ -13,6 +26,10 @@ export type Turn = {
   outputTokens: number
   /** The model the turn's main loop last answered with. */
   model?: string
+  /** Every main-loop call of the turn's replies, in the order the model made them. */
+  calls: LiveCall[]
+  /** True when the last block of the turn's replies was text, or the person sent a message after it, so the next call starts a new run. */
+  isAfterText: boolean
   /** Text blocks of the turn's replies, trimmed, in the order stored. */
   texts: string[]
   /** Set by `turn.complete`; absent while the turn runs. */
@@ -33,6 +50,8 @@ declare module 'claude-code' {
       isFolding: boolean
       /** Turns whose summary is open, by turn id. */
       openTurnIds: string[]
+      /** Runs of calls the person opened to every call, by run id. */
+      openRunIds: string[]
     }
   }
 }

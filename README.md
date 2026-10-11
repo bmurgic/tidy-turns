@@ -22,7 +22,8 @@ While the summary is open, the line is bright and its star and tree are orange. 
 
 ## What it changes
 
-- Each finished turn's tool calls and notes fold away. The turn that is running still shows everything.
+- Each finished turn's tool calls and notes fold away.
+- While a turn runs, Claude's notes stay. The tool calls between two notes share one dim row that shows the call running now, such as `  ⎿ Edit src/app.rs`, and changes as the next call starts. Calls that run at once get a line each. Click the row to open every call of that run, and click it again to close it. The `⎿` shows only for calls that come after a note. With no note before them, the row starts with `⏺` instead. A call's output is never drawn. A call that fails or is interrupted gets its own red line, such as `⏺ Bash false · failed`. The row folds away with the rest when the turn ends. Turn off `compactLiveCalls` to see every call as Claude Code draws it.
 - The `✻ Verb for 7s` line moves above the answer and replaces Claude Code's own line under it.
 - Replies appear whole when each text block ends, not word by word. This one applies on every surface, not only the terminal.
 
@@ -40,7 +41,7 @@ The plugin is one hooks module, `hooks/register.tsx`. It hooks these events:
 | `tool.call` | Counts the turn's tool calls by tool name, and notes which failed and which files an edit changed. It passes every call on unchanged and never makes a call of its own. |
 | `session.append` for responses | Records the text of each reply, so the plugin can tell working notes from the final answer. |
 | `turn.step` | Holds each reply's text until the block is whole, then passes it on. Adds each model request's output token count, and records the model name. |
-| `ui.render` | Draws the folded turn, the `✻ Verb for 7s` line, and the summary in the terminal. |
+| `ui.render` | Draws the folded turn, the `✻ Verb for 7s` line, and the summary in the terminal. Draws a running turn's tool calls as one line each, and opens a live group of reads and searches into one line per call. |
 
 Everything it records stays in the session's plugin state (`$.state`), and it writes debug lines to Claude Code's own debug log. The plugin makes no network requests, runs no programs, reads no files or environment variables, and asks for no credentials. "Tokens" in this README and in the `showTokens` setting means the model's output token count, not an access token.
 
@@ -82,7 +83,7 @@ A turn with nothing to summarize shows `✻ Verb for 7s` with no arrow, and clic
 
 ## Change the settings
 
-Each summary item is a setting that you turn on or off. Only the tool call count is on by default.
+Each summary item is a setting that you turn on or off. Every item is on by default. `compactLiveCalls` is also on by default. It is not a summary item.
 
 To change them in Claude Code, run:
 
@@ -100,18 +101,19 @@ To see the current values, run `claude plugin configure tidy-turns@tidy-turns` w
 
 | Setting | Shows | Default |
 | --- | --- | --- |
+| `compactLiveCalls` | Draws each tool call of the running turn as one line. It changes the live view, not the summary. | on |
 | `showToolCount` | How many tool calls the turn made | on |
-| `showToolKinds` | The calls by kind, such as `2 reads · 1 command`. A kind with its own item below is left out while that item is on. | off |
-| `showSubagents` | How many subagents the turn ran | off |
-| `showFilesChanged` | How many files the turn's edits changed | off |
-| `showSessionTools` | Session tool calls by kind, such as `2 messages · 1 monitor` | off |
-| `showFailures` | How many tool calls failed or were denied | off |
-| `showEndReason` | `interrupted`, `refused`, or `errored` when the turn did not end normally | off |
-| `showModel` | The model that answered, such as `Haiku 4.5` | off |
-| `showTokens` | The output tokens the turn used, its subagents' included | off |
-| `showSkills` | How many skills the turn loaded | off |
-| `showToolSearches` | How many tool searches the turn made | off |
-| `showMcpCalls` | How many MCP tool calls the turn made | off |
+| `showToolKinds` | The calls by kind, such as `2 reads · 1 command`. A kind with its own item below is left out while that item is on. | on |
+| `showSubagents` | How many subagents the turn ran | on |
+| `showFilesChanged` | How many files the turn's edits changed | on |
+| `showSessionTools` | Session tool calls by kind, such as `2 messages · 1 monitor` | on |
+| `showFailures` | How many tool calls failed or were denied | on |
+| `showEndReason` | `interrupted`, `refused`, or `errored` when the turn did not end normally | on |
+| `showModel` | The model that answered, such as `Haiku 4.5` | on |
+| `showTokens` | The output tokens the turn used, its subagents' included | on |
+| `showSkills` | How many skills the turn loaded | on |
+| `showToolSearches` | How many tool searches the turn made | on |
+| `showMcpCalls` | How many MCP tool calls the turn made | on |
 
 The summary puts each group of related items on its own row, in this order: activity (count, kinds, subagents), changes, session tools, usage (model, tokens, skills, tool searches, MCP calls), and problems in red. A group with nothing to show gets no row.
 
