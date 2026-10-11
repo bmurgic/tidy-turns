@@ -718,6 +718,53 @@ describe('tidy-turns', () => {
       expect(await linesOf(await mountCall($, 'b'))).toEqual(['  ⎿ Bash ls'])
     })
 
+    test('starts a new row after a message sent while the turn runs', async ($, on) => {
+      await startTurn($, on, [{ callId: 'a' }])
+      await $.session
+        .append({
+          message: { type: 'attachment', name: 'queued_command', role: 'user', content: [{ type: 'text', text: 'also check the tests' }] } as unknown as Parameters<
+            Engine['session']['append']
+          >[0]['message'],
+          door: 'attachment',
+          origin: { kind: 'engine' },
+          uuid: 'live-user',
+        })
+        .catch(storeMissing)
+      await appendReply($, 'live-b', [{ callId: 'b' }, { callId: 'c' }])
+      await callTool($, 'a')
+      await callTool($, 'b')
+      await callTool($, 'c')
+
+      expect(await linesOf(await mountCall($, 'a'))).toEqual(['⏺ Bash ls'])
+      expect(await linesOf(await mountCall($, 'b'))).toEqual(['⏺ Bash ls ▸ 2 calls'])
+    })
+
+    test('counts an advisor call, which the API runs itself, in the row of the calls around it', async ($, on) => {
+      stubEngine(on)
+      await $.turn.start({ text: 'list files', turnId: 'live' })
+      await $.session
+        .append({
+          message: {
+            type: 'assistant',
+            role: 'assistant',
+            content: [
+              { type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'ls' } },
+              { type: 'server_tool_use', id: 'adv', name: 'advisor', input: {} },
+              { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'ls' } },
+            ],
+          } as unknown as Parameters<Engine['session']['append']>[0]['message'],
+          door: 'response',
+          origin: { kind: 'model', model: 'claude-opus-5-5' },
+          uuid: 'live-a',
+        })
+        .catch(storeMissing)
+      await callTool($, 'a')
+      await callTool($, 'b')
+
+      expect(await linesOf(await mountCall($, 'a'))).toEqual(['⏺ Bash ls ▸ 3 calls'])
+      expect(isHidden(await (await mountCall($, 'adv')).drawn())).toBe(true)
+    })
+
     test('draws a failed call as a red line of its own and leaves it out of the row', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'fail' }, { callId: 'b' }, { callId: 'c' }])
       await callTool($, 'fail')
