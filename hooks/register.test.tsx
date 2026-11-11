@@ -428,6 +428,9 @@ describe('tidy-turns', () => {
       }
     }
 
+    // A note, then call a running `first` and call b running `second`.
+    const NOTE_THEN_FIRST_AND_SECOND: Block[] = ['note', { callId: 'a', input: { command: 'first' } }, { callId: 'b', input: { command: 'second' } }]
+
     const startTurn = async ($: Engine, on: On, blocks: Block[]) => {
       stubEngine(on)
       await $.turn.start({ text: 'list files', turnId: 'live' })
@@ -479,11 +482,7 @@ describe('tidy-turns', () => {
     })
 
     test('replaces the line with the call that is running now', async ($, on) => {
-      await startTurn($, on, [
-        'note',
-        { callId: 'a', input: { command: 'first' } },
-        { callId: 'b', input: { command: 'second' } },
-      ])
+      await startTurn($, on, NOTE_THEN_FIRST_AND_SECOND)
       await callTool($, 'a')
       const release = holdCall($, 'b')
       const row = await mountTool($, 'a')
@@ -494,11 +493,7 @@ describe('tidy-turns', () => {
     })
 
     test('shows calls that run at once on a line each', async ($, on) => {
-      await startTurn($, on, [
-        'note',
-        { callId: 'a', input: { command: 'first' } },
-        { callId: 'b', input: { command: 'second' } },
-      ])
+      await startTurn($, on, NOTE_THEN_FIRST_AND_SECOND)
       const releaseA = holdCall($, 'a')
       const releaseB = holdCall($, 'b')
       const row = await mountTool($, 'a')
@@ -510,11 +505,7 @@ describe('tidy-turns', () => {
     })
 
     test('opens on a click to every call of the run, and closes on a second', async ($, on) => {
-      await startTurn($, on, [
-        'note',
-        { callId: 'a', input: { command: 'first' } },
-        { callId: 'b', input: { command: 'second' } },
-      ])
+      await startTurn($, on, NOTE_THEN_FIRST_AND_SECOND)
       await callTools($, 'a', 'b')
       const row = await mountTool($, 'a')
 
