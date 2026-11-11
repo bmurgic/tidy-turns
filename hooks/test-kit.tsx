@@ -83,38 +83,45 @@ export const finishTurn = ($: Engine, turnId: string) =>
 // A turn with something for every summary item: two reads, three edits over two
 // files, a failed command, a subagent's read, one model request, then an interrupt.
 export const runRichTurn = async ($: Engine, on: On, turnId: string) => {
-  const usage = {
-    input_tokens: 10,
-    output_tokens: 1234,
-    cache_read_input_tokens: 0,
-    cache_creation_input_tokens: 0,
-    model: 'claude-haiku-4-5-20251001',
-  }
-
-  on('turn.step', async function* (_$, e) {
-    yield { kind: 'stop', stopReason: 'end_turn', usage }
-
-    return {
-      turnId: e.turnId,
-      index: e.index,
-      answer: '',
-      toolUses: [],
-      stopReason: 'end_turn',
-      usage,
-    }
-  })
-
+  stubHaikuStep(on)
   await $.turn.start({ text: 'fix it', turnId })
   await appendText($, `${turnId}-a`, `Looking (${turnId}).`)
-
-  const stream = $.turn.step({
+  await runModelRequest($, turnId)
+  await runRichCalls($, turnId)
+  await appendText($, `${turnId}-b`, `Stopped (${turnId}).`)
+  await $.turn.complete({
+    answer: `Stopped (${turnId}).`,
+    durationMs: 4200,
+    isAborted: true,
     turnId,
-    index: 0,
-    model: usage.model,
-    messageCount: 1,
+    reason: 'aborted',
   })
-  while (!(await stream.next()).done) {}
+}
 
+const HAIKU_USAGE = {
+  input_tokens: 10,
+  output_tokens: 1234,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+  model: 'claude-haiku-4-5-20251001',
+}
+
+// Answers each model request as Haiku 4.5 with 1234 output tokens. The kit takes
+// the hooks beneath the plugins only before the test first calls $.
+const stubHaikuStep = (on: On) =>
+  on('turn.step', async function* (_$, e) {
+    yield { kind: 'stop', stopReason: 'end_turn', usage: HAIKU_USAGE }
+
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: HAIKU_USAGE }
+  })
+
+const runModelRequest = async ($: Engine, turnId: string) => {
+  const stream = $.turn.step({ turnId, index: 0, model: HAIKU_USAGE.model, messageCount: 1 })
+  while (!(await stream.next()).done) {}
+}
+
+// The rich turn's calls: two reads, three edits over two files, a failed command, and a subagent's read.
+const runRichCalls = async ($: Engine, turnId: string) => {
   await $.tool.call({
     tool: 'Read',
     tool_use_id: `${turnId}-r1`,
@@ -158,14 +165,6 @@ export const runRichTurn = async ($: Engine, on: On, turnId: string) => {
     agentId: 'agent-1',
   } as const
   await $.tool.call(subagentRead as Omit<typeof subagentRead, 'agentId'>)
-  await appendText($, `${turnId}-b`, `Stopped (${turnId}).`)
-  await $.turn.complete({
-    answer: `Stopped (${turnId}).`,
-    durationMs: 4200,
-    isAborted: true,
-    turnId,
-    reason: 'aborted',
-  })
 }
 
 export const ALL_ITEMS = {

@@ -159,36 +159,53 @@ export type SummaryGroup = { name: 'activity' | 'changes' | 'session' | 'usage' 
 // The summary's groups in the order they show, each the turned-on items it has
 // something for; a group with nothing is left out.
 export const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
-  const calls = turn.toolIds.length
-  const activity = [
-    settings.showToolCount && calls > 0 ? plural(calls, 'tool call', 'tool calls') : '',
-    // A kind whose own item is on is counted there instead.
-    ...(settings.showToolKinds ? describeKinds(turn.toolNames, toolKind => toolKind.item === undefined || !settings[toolKind.item]) : []),
-    settings.showSubagents && turn.agentIds.length > 0 ? plural(turn.agentIds.length, 'agent', 'agents') : '',
-  ]
-  const changes = [settings.showFilesChanged && turn.files.length > 0 ? `${plural(turn.files.length, 'file', 'files')} changed` : '']
-  const sessionTools = settings.showSessionTools ? describeKinds(turn.toolNames, toolKind => toolKind.item === 'showSessionTools') : []
-  const usage = [
-    settings.showModel && turn.model !== undefined ? formatModel(turn.model) : '',
-    settings.showTokens && turn.outputTokens > 0 ? formatTokens(turn.outputTokens) : '',
-    settings.showSkills ? countKind(turn.toolNames, SKILL) : '',
-    settings.showToolSearches ? countKind(turn.toolNames, TOOL_SEARCH) : '',
-    settings.showMcpCalls ? countKind(turn.toolNames, MCP_CALL) : '',
-  ]
-  const problems = [
-    settings.showFailures && turn.failedCount > 0 ? `${turn.failedCount} failed` : '',
-    settings.showEndReason ? (END_REASONS[turn.endReason ?? 'answer'] ?? '') : '',
-  ]
   const groups: SummaryGroup[] = [
-    { name: 'activity', text: joinItems(activity) },
-    { name: 'changes', text: joinItems(changes) },
-    { name: 'session', text: joinItems(sessionTools) },
-    { name: 'usage', text: joinItems(usage) },
-    { name: 'problems', text: joinItems(problems) },
+    { name: 'activity', text: joinItems(activityItems(turn, settings)) },
+    { name: 'changes', text: joinItems(changeItems(turn, settings)) },
+    { name: 'session', text: joinItems(sessionItems(turn, settings)) },
+    { name: 'usage', text: joinItems(usageItems(turn, settings)) },
+    { name: 'problems', text: joinItems(problemItems(turn, settings)) },
   ]
 
   return groups.filter(group => group.text !== '')
 }
+
+const activityItems = (turn: Turn, settings: Settings) => {
+  const calls = turn.toolIds.length
+  // A kind whose own item is on is counted there instead.
+  const kinds = settings.showToolKinds ? describeKinds(turn.toolNames, toolKind => toolKind.item === undefined || !settings[toolKind.item]) : []
+
+  return [
+    settings.showToolCount && calls > 0 ? plural(calls, 'tool call', 'tool calls') : '',
+    ...kinds,
+    settings.showSubagents && turn.agentIds.length > 0 ? plural(turn.agentIds.length, 'agent', 'agents') : '',
+  ]
+}
+
+const changeItems = (turn: Turn, settings: Settings) => [
+  settings.showFilesChanged && turn.files.length > 0 ? `${plural(turn.files.length, 'file', 'files')} changed` : '',
+]
+
+const sessionItems = (turn: Turn, settings: Settings) =>
+  settings.showSessionTools ? describeKinds(turn.toolNames, toolKind => toolKind.item === 'showSessionTools') : []
+
+const usageItems = (turn: Turn, settings: Settings) => [...modelItems(turn, settings), ...toolUsageItems(turn, settings)]
+
+const modelItems = (turn: Turn, settings: Settings) => [
+  settings.showModel && turn.model !== undefined ? formatModel(turn.model) : '',
+  settings.showTokens && turn.outputTokens > 0 ? formatTokens(turn.outputTokens) : '',
+]
+
+const toolUsageItems = (turn: Turn, settings: Settings) => [
+  settings.showSkills ? countKind(turn.toolNames, SKILL) : '',
+  settings.showToolSearches ? countKind(turn.toolNames, TOOL_SEARCH) : '',
+  settings.showMcpCalls ? countKind(turn.toolNames, MCP_CALL) : '',
+]
+
+const problemItems = (turn: Turn, settings: Settings) => [
+  settings.showFailures && turn.failedCount > 0 ? `${turn.failedCount} failed` : '',
+  settings.showEndReason ? (END_REASONS[turn.endReason ?? 'answer'] ?? '') : '',
+]
 
 const joinItems = (items: string[]) => items.filter(item => item !== '').join(' · ')
 
