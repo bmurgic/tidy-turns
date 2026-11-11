@@ -108,8 +108,6 @@ function* releaseHeld(held: HeldText): Generator<TurnStepChunk> {
   held.text = ''
 }
 
-const TIDY_TURNS_COMMAND = { command: 'tidy-turns' } as const
-
 const showCommand: Hook<'session.start'> = async ($, e, next) => {
   await $.command.register({
     name: 'tidy-turns',
@@ -119,7 +117,7 @@ const showCommand: Hook<'session.start'> = async ($, e, next) => {
   return next(e)
 }
 
-const toggleFolding: MatchedHook<'command.run', typeof TIDY_TURNS_COMMAND> = async $ => {
+const toggleFolding: MatchedHook<'command.run', { command: 'tidy-turns' }> = async $ => {
   const isOn = !(await read($, isFolding))
   await update($, isFolding, () => isOn)
   $.ui.invalidate('ui.render')
@@ -443,7 +441,8 @@ export const register: Register = (on, options) => {
   const settings = readSettings(options)
 
   on('session.start', showCommand)
-  on('command.run', TIDY_TURNS_COMMAND, toggleFolding)
+  // Inline, so the engine's pre-load scan reads it as the module's own command.
+  on('command.run', { command: 'tidy-turns' }, toggleFolding)
   on('turn.start', recordTurnStart)
   on('tool.call', trackToolCall)
   on('session.append', RESPONSE_DOOR, recordReply)

@@ -610,6 +610,8 @@ describe('tidy-turns', () => {
 
       expect(isHidden(await (await mountGroup($, ['a'], false)).drawn())).toBe(true)
       expect(await (await mountGroup($, [undefined])).find({ type: 'Text', text: 'engine group expanded=false' })).toBeDefined()
+      // A finished group with one call the plugin cannot place keeps the engine row too.
+      expect(await (await mountGroup($, ['a', undefined], false)).find({ type: 'Text', text: 'engine group expanded=false' })).toBeDefined()
     })
 
     test('leaves the desktop to the engine rows', async ($, on) => {
