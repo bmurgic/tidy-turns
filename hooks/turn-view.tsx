@@ -133,8 +133,8 @@ export const turnSteps = (turn: Turn): Step[] => {
 
 type TurnCopy = { turn: Turn; openRunIds: string[]; onToggleRun: (runId: string) => void; columns: number }
 
-// A finished turn's work drawn the way it looked while it ran, for over its open
-// line. The turn's own rows stay hidden, so the work shows once.
+// A finished turn's work drawn the way it looked while it ran, for under its open
+// line: the rows above the line stay hidden, so the line never moves.
 export const drawTurnCopy = (ui: Ui, { turn, openRunIds, onToggleRun, columns }: TurnCopy) => (
   <ui.Box key="tidy-turns:copy" flexDirection="column">
     {turnSteps(turn).map(step => {

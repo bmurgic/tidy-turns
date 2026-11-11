@@ -414,7 +414,7 @@ export const register: Register = (on, options) => {
 
   // A subagent's finished notice and its message to the main loop belong to the
   // turn that ran it: they fold with the turn and stay hidden while its summary is
-  // open, since the copy over the line shows the message there.
+  // open, since the copy under the line shows the message there.
   on('ui.render', { component: 'UserMessage', surface: TERMINAL }, async ($, e, next) => {
     if (e.props.origin.kind === 'composer' && e.props.isExpanded !== isDetailedView) {
       isDetailedView = e.props.isExpanded
@@ -563,8 +563,8 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    // The summary opens over the line as a tree a click opens and closes; the
-    // turn's own rows stay folded. A turn with no summary has nothing to open, so no arrow
+    // The summary sits under the line as a tree a click opens and closes; the
+    // rows above the line stay folded. A turn with no summary has nothing to open, so no arrow
     // and no click. Each row sits in a keyed Box, its own hover scope.
     const isOpen = (await read($, openTurnIds)).includes(turnId)
     const toggle = () => toggleSummary($, turnId)
@@ -598,42 +598,38 @@ export const register: Register = (on, options) => {
       <Text dimColor>✻ {describeVerb(turn)}</Text>
     )
 
-    // Open, the turn's work draws above the tree, the way it looked while it ran.
-    // With folding off its rows still show above, so there is nothing to copy.
-    const copy =
-      isOpen && isFolded
-        ? drawTurnCopy(ui, {
-            turn,
-            openRunIds: await read($, openRunIds),
-            onToggleRun: runId => toggleRun($, runId),
-            columns: e.viewport?.columns ?? DEFAULT_COLUMNS,
-          })
-        : null
-
-    // The tree sits over the line, set off from the copy by a blank line.
-    const tree = isOpen && (
-      <Box key="tidy-turns:tree" flexDirection="column" alignSelf="flex-start" marginTop={copy === null ? 0 : 1}>
-        {groups.map((group, index) => (
-          <Box key={`tidy-turns:row:${group.name}`}>
-            <Text color={CLAUDE_ORANGE}>{index === groups.length - 1 ? '└─ ' : '├─ '}</Text>
-            {group.name === 'problems' ? (
-              <Text color={ERROR_RED}>{group.text}</Text>
-            ) : (
-              clickable(`tidy-turns:row-text:${group.name}`, group.text)
-            )}
-          </Box>
-        ))}
+    const summary = (
+      <Box flexDirection="column" alignSelf="flex-start">
+        {header}
+        {isOpen &&
+          groups.map((group, index) => (
+            <Box key={`tidy-turns:row:${group.name}`}>
+              <Text color={CLAUDE_ORANGE}>{index === groups.length - 1 ? '└─ ' : '├─ '}</Text>
+              {group.name === 'problems' ? (
+                <Text color={ERROR_RED}>{group.text}</Text>
+              ) : (
+                clickable(`tidy-turns:row-text:${group.name}`, group.text)
+              )}
+            </Box>
+          ))}
       </Box>
     )
 
-    // Claude Code pins the transcript to the prompt, so a row grows upward from its
-    // bottom. Everything an open turn adds goes above the line, which keeps the
-    // line, and the pointer on it, where they were.
+    // Open, the turn's work draws under the tree, the way it looked while it ran.
+    // With folding off its rows still show above, so there is nothing to copy.
+    const copy = isOpen && isFolded
+      ? drawTurnCopy(ui, {
+          turn,
+          openRunIds: await read($, openRunIds),
+          onToggleRun: runId => toggleRun($, runId),
+          columns: e.viewport?.columns ?? DEFAULT_COLUMNS,
+        })
+      : null
+
     return (
       <Box flexDirection="column" marginTop={1}>
+        {summary}
         {copy}
-        {tree}
-        <Box alignSelf="flex-start">{header}</Box>
         {await next(e)}
       </Box>
     )
