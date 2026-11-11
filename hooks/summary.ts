@@ -9,7 +9,8 @@ const formatDuration = (durationMs: number) => {
   return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
 }
 
-// Which summary items the person turned on, from the manifest's userConfig.
+// The person's settings, from the manifest's userConfig: whether the live view
+// draws each call as one line, and which summary items show.
 export type Settings = {
   compactLiveCalls: boolean
   showToolCount: boolean
