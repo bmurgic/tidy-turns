@@ -9,7 +9,7 @@ const isFolding = atom({ plugin: 'tidy-turns', key: 'isFolding' } as const, true
 const openTurnIds = atom({ plugin: 'tidy-turns', key: 'openTurnIds' } as const, [])
 const openRunIds = atom({ plugin: 'tidy-turns', key: 'openRunIds' } as const, [])
 
-const EMPTY_TURN: Turn = { toolIds: [], toolNames: [], failedCount: 0, files: [], agentIds: [], outputTokens: 0, calls: [], isAfterText: false, texts: [] }
+const EMPTY_TURN: Turn = { toolIds: [], toolNames: [], failedCount: 0, files: [], agentIds: [], spawnedAgentIds: [], agentAnswers: [], outputTokens: 0, calls: [], isAfterText: false, texts: [] }
 
 // Claude Code's own past-tense turn verbs, as its 2.1.286 build lists them.
 const VERBS = ['Baked', 'Brewed', 'Churned', 'Cogitated', 'Cooked', 'Crunched', 'Sautéed', 'Worked']
@@ -239,6 +239,16 @@ const isFoldedText = (all: Turns, text: string) => {
 // The latest finished turn whose final answer is this text block.
 const answeredTurnId = (all: Turns, text: string) =>
   Object.entries(all).findLast(([, turn]) => turn.durationMs !== undefined && turn.texts.at(-1) === text.trim())?.[0]
+
+// The finished turn a subagent's row belongs to: a finished notice by the call that
+// started the subagent, a message from it by the answer its run ended with.
+const subagentRowTurnId = (all: Turns, row: { text: string; task?: { toolUseId?: string }; from?: unknown }) =>
+  Object.entries(all).find(
+    ([, turn]) =>
+      turn.durationMs !== undefined &&
+      ((row.task?.toolUseId !== undefined && turn.toolIds.includes(row.task.toolUseId)) ||
+        (row.from !== undefined && turn.agentAnswers.includes(row.text.trim()))),
+  )?.[0]
 
 const formatDuration = (durationMs: number) => {
   const seconds = Math.round(durationMs / 1000)
@@ -512,7 +522,15 @@ export const register: Register = (on, options) => {
     return { text: `Turn folding ${isOn ? 'on' : 'off'}.` }
   })
 
+  // A subagent's run raises its own turn.start; it stays part of the main turn.
   on('turn.start', async ($, e, next) => {
+    if (e.agentId !== undefined) {
+      const agentId = e.agentId
+      await addToRunningTurn($, turn => ({ ...turn, spawnedAgentIds: addOnce(turn.spawnedAgentIds, agentId) }))
+
+      return next(e)
+    }
+
     await update($, runningTurnId, () => e.turnId)
     await update($, turns, all => ({ ...all, [e.turnId]: EMPTY_TURN }))
     debug($, `turn.start ${e.turnId}`)
@@ -562,6 +580,17 @@ export const register: Register = (on, options) => {
 
   on('turn.complete', async ($, e, next) => {
     if (e.agentId !== undefined) {
+      const answer = e.answer.trim()
+
+      // A subagent can answer after the turn that ran it has ended.
+      const agentId = e.agentId
+      const ownerId = Object.entries(await read($, turns)).find(([, turn]) => turn.spawnedAgentIds.includes(agentId))?.[0]
+
+      if (answer !== '' && ownerId !== undefined) {
+        await update($, turns, all => ({ ...all, [ownerId]: { ...(all[ownerId] ?? EMPTY_TURN), agentAnswers: [...(all[ownerId]?.agentAnswers ?? []), answer] } }))
+        $.ui.invalidate('ui.render')
+      }
+
       return next(e)
     }
 
@@ -616,14 +645,28 @@ export const register: Register = (on, options) => {
     }
   })
 
-  on('ui.render', { component: 'UserMessage', surface: TERMINAL }, ($, e, next) => {
+  // A subagent's finished notice and its message to the main loop belong to the
+  // turn that ran it: they fold with the turn and show while its summary is open.
+  on('ui.render', { component: 'UserMessage', surface: TERMINAL }, async ($, e, next) => {
     if (e.props.origin.kind === 'composer' && e.props.isExpanded !== isDetailedView) {
       isDetailedView = e.props.isExpanded
       debug($, `detailed view ${isDetailedView ? 'open' : 'closed'}`)
       $.ui.invalidate('ui.render')
     }
 
-    return next(e)
+    if (isDetailedView || !(await read($, isFolding))) {
+      return next(e)
+    }
+
+    const turnId = subagentRowTurnId(await read($, turns), e.props)
+
+    if (turnId === undefined || (await read($, openTurnIds)).includes(turnId)) {
+      return next(e)
+    }
+
+    const { Box } = $.ui.resolve(e)
+
+    return <Box display="none" />
   })
 
   // A finished turn's calls fold away. The calls of the running turn between two

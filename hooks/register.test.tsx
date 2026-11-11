@@ -206,6 +206,30 @@ const drawText = async ($: Engine, text: string, surface: Surface) =>
     })
   ).drawn()
 
+// A turn that writes a note, runs an Explore subagent through an Agent call, then
+// answers. The subagent's run raises its own turn.start and turn.complete.
+const runSubagentTurn = async ($: Engine, turnId: string) => {
+  await $.turn.start({ text: 'list files', turnId })
+  await appendText($, `${turnId}-a`, `Let me look (${turnId}).`)
+  // The kit types no agentId on turn events; a subagent's run carries one.
+  const start = { text: 'explore', turnId: `${turnId}-sub`, agentId: `${turnId}-agent` }
+  await $.turn.start(start as Omit<typeof start, 'agentId'>)
+  const end = { answer: ` Found it (${turnId}).\n`, durationMs: 900, isAborted: false, turnId: `${turnId}-sub`, reason: 'answer', agentId: `${turnId}-agent` } as const
+  await $.turn.complete(end as Omit<typeof end, 'agentId'>)
+  await $.tool.call({ tool: 'Agent', tool_use_id: `${turnId}-agent-call` } as unknown as Parameters<Engine['tool']['call']>[0])
+  await appendText($, `${turnId}-b`, `Found one file (${turnId}).`)
+  await finishTurn($, turnId)
+}
+
+const subagentNotice = (turnId: string) => ({
+  text: 'Agent "Explore" finished',
+  origin: { kind: 'task-notification' },
+  isExpanded: false,
+  task: { id: `${turnId}-agent`, status: 'completed', toolUseId: `${turnId}-agent-call`, durationMs: 900 },
+})
+
+const subagentMessage = (text: string) => ({ text, origin: { kind: 'peer' }, isExpanded: false, from: { name: 'Explore' } })
+
 const isHidden = (tree: RenderElement) => tree.type === 'Box' && tree.props?.display === 'none'
 
 // A turn of skill, tool search, MCP and session tool calls, and one read.
@@ -309,6 +333,47 @@ describe('tidy-turns', () => {
     })
 
     expect(isHidden(await footer.drawn())).toBe(true)
+  })
+
+  test('a subagent run inside a turn leaves the turn to fold to one answer', async ($, on) => {
+    stubEngine(on)
+    await runSubagentTurn($, 'main')
+
+    expect(isHidden(await drawText($, 'Let me look (main).', 'terminal'))).toBe(true)
+    expect(await (await mountAnswer($, 'Found one file (main).')).find({ key: 'tidy-turns:line' })).toBeDefined()
+  })
+
+  test("hides a subagent's finished notice and message until its turn's summary opens", async ($, on) => {
+    stubEngine(on)
+    await runSubagentTurn($, 'main')
+    const notice = await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: subagentNotice('main') })
+    const message = await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: subagentMessage('Found it (main).') })
+    const stranger = await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: subagentMessage('Something else.') })
+
+    expect(isHidden(await notice.drawn())).toBe(true)
+    expect(isHidden(await message.drawn())).toBe(true)
+    expect(isHidden(await stranger.drawn())).toBe(false)
+
+    await (await mountAnswer($, 'Found one file (main).')).press({ key: 'tidy-turns:lead' })
+
+    expect(isHidden(await notice.drawn())).toBe(false)
+    expect(isHidden(await message.drawn())).toBe(false)
+  })
+
+  test("folds a subagent's message with the turn that ran it when it arrives after that turn", async ($, on) => {
+    stubEngine(on)
+    await $.turn.start({ text: 'look', turnId: 'early' })
+    const start = { text: 'explore', turnId: 'early-sub', agentId: 'early-agent' }
+    await $.turn.start(start as Omit<typeof start, 'agentId'>)
+    await $.tool.call({ tool: 'Agent', tool_use_id: 'early-agent-call' } as unknown as Parameters<Engine['tool']['call']>[0])
+    await appendText($, 'early-a', 'Still looking (early).')
+    await finishTurn($, 'early')
+    const end = { answer: 'Found it late.', durationMs: 900, isAborted: false, turnId: 'early-sub', reason: 'answer', agentId: 'early-agent' } as const
+    await $.turn.complete(end as Omit<typeof end, 'agentId'>)
+    await $.turn.start({ text: 'Found it late.', turnId: 'late' })
+    const message = await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: subagentMessage('Found it late.') })
+
+    expect(isHidden(await message.drawn())).toBe(true)
   })
 
   test('shows every row while the ctrl+o transcript is open', async ($, on) => {

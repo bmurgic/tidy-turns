@@ -22,6 +22,10 @@ export type Turn = {
   files: string[]
   /** Subagents that made tool calls during the turn, each once. */
   agentIds: string[]
+  /** Subagents the turn started, each once, so an answer that comes after the turn still finds it. */
+  spawnedAgentIds: string[]
+  /** What each subagent the turn ran answered, trimmed, so its message to the main loop folds with the turn. */
+  agentAnswers: string[]
   /** Output tokens of every model request the turn made, its subagents' included. */
   outputTokens: number
   /** The model the turn's main loop last answered with. */
