@@ -1,8 +1,8 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, RenderViewport, ResolveInput, ToolCallInput, ToolCallResult, TurnStepChunk, TurnStepResult } from 'claude-code'
+import type { EngineInterface, Hook, MatchedHook, Register, RenderViewport, ResolveInput, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStepChunk, TurnStepResult } from 'claude-code'
 
 import type { LiveCall, Turn, Turns } from '../types'
-import { describeVerb, readSettings, summaryGroups } from './summary'
+import { describeVerb, readSettings, type Settings, summaryGroups } from './summary'
 import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy } from './turn-view'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
@@ -213,6 +213,13 @@ const drawHidden = ($: EngineInterface, e: ResolveInput) => {
 // The width a drawing fits its lines to; DEFAULT_COLUMNS where no surface has measured.
 const columnsOf = (e: { viewport?: RenderViewport }) => e.viewport?.columns ?? DEFAULT_COLUMNS
 
+// The event and next of a ui.render hook on the rows `Row` matches. A row hook that
+// reads the settings takes them as a fourth argument, from a function literal in
+// register: the engine accepts only a function literal or a name as a hook.
+type RowEvent<Row> = Parameters<MatchedHook<'ui.render', Row>>[1]
+
+type RowNext<Row> = Parameters<MatchedHook<'ui.render', Row>>[2]
+
 const finishedTurns = (all: Turns) => Object.values(all).filter(turn => turn.durationMs !== undefined)
 
 const isFoldedTool = (all: Turns, toolUseId: string) => finishedTurns(all).some(turn => turn.toolIds.includes(toolUseId))
@@ -242,7 +249,9 @@ const subagentRowTurnId = (all: Turns, row: { text: string; task?: { toolUseId?:
 
 const toggleId = (ids: string[], id: string) => (ids.includes(id) ? ids.filter(other => other !== id) : [...ids, id])
 
-// A click on a Worked for line opens or closes that turn's summary alone.
+// A click on a Worked for line opens or closes that turn's summary alone. Each
+// toggle names its own atom: the engine's scan of the module reads the state it
+// writes off each update call.
 const toggleSummary = async ($: EngineInterface, turnId: string) => {
   await update($, openTurnIds, ids => toggleId(ids, turnId))
   $.ui.invalidate('ui.render')
@@ -289,68 +298,345 @@ function* releaseHeld(held: HeldText): Generator<TurnStepChunk> {
   held.text = ''
 }
 
+const TIDY_TURNS_COMMAND = { command: 'tidy-turns' } as const
+
+const showCommand: Hook<'session.start'> = async ($, e, next) => {
+  await $.command.register({
+    name: 'tidy-turns',
+    description: 'Toggle folding of finished turns down to their final answer',
+  })
+
+  return next(e)
+}
+
+const toggleFolding: MatchedHook<'command.run', typeof TIDY_TURNS_COMMAND> = async $ => {
+  const isOn = !(await read($, isFolding))
+  await update($, isFolding, () => isOn)
+  $.ui.invalidate('ui.render')
+
+  return { text: `Turn folding ${isOn ? 'on' : 'off'}.` }
+}
+
+// A subagent's run raises its own turn.start; it stays part of the main turn.
+const recordTurnStart: Hook<'turn.start'> = async ($, e, next) => {
+  if (e.agentId !== undefined) {
+    const agentId = e.agentId
+    await addToRunningTurn($, turn => ({ ...turn, spawnedAgentIds: addOnce(turn.spawnedAgentIds, agentId) }))
+
+    return next(e)
+  }
+
+  await update($, runningTurnId, () => e.turnId)
+  await update($, turns, all => ({ ...all, [e.turnId]: EMPTY_TURN }))
+  debug($, `turn.start ${e.turnId}`)
+
+  return next(e)
+}
+
+// Marks a main-loop call running while it runs, and records it once it ends.
+const trackToolCall: Hook<'tool.call'> = async ($, e, next) => {
+  if (e.agentId === undefined) {
+    await addToRunningTurn($, turn => ({ ...turn, calls: withCallState(turn.calls, e.tool_use_id, 'running') }))
+    $.ui.invalidate('ui.render')
+  }
+
+  const result = await next(e)
+  await recordToolCall($, e, result)
+  $.ui.invalidate('ui.render')
+
+  return result
+}
+
+const RESPONSE_DOOR = { door: 'response' } as const
+
+const recordReply: MatchedHook<'session.append', typeof RESPONSE_DOOR> = async ($, e, next) => {
+  if (e.agentId === undefined && Array.isArray(e.message.content)) {
+    const blocks = replyBlocks(e.message.content)
+
+    if (blocks.length > 0) {
+      const projectRoot = await $.session.root().catch(() => '')
+      await addToRunningTurn($, turn => addReplyBlocks(turn, blocks, projectRoot))
+      $.ui.invalidate('ui.render')
+    }
+  }
+
+  return next(e)
+}
+
+const recordTurnComplete: Hook<'turn.complete'> = async ($, e, next) => {
+  if (e.agentId === undefined) {
+    await finishRunningTurn($, e)
+  } else {
+    await recordSubagentAnswer($, e.agentId, e.answer.trim())
+  }
+
+  return next(e)
+}
+
+// A subagent can answer after the turn that ran it has ended.
+const recordSubagentAnswer = async ($: EngineInterface, agentId: string, answer: string) => {
+  const ownerId = Object.entries(await read($, turns)).find(([, turn]) => turn.spawnedAgentIds.includes(agentId))?.[0]
+
+  if (answer !== '' && ownerId !== undefined) {
+    await changeTurn($, ownerId, owner => ({ ...owner, agentAnswers: [...owner.agentAnswers, answer] }))
+    $.ui.invalidate('ui.render')
+  }
+}
+
+const finishRunningTurn = async ($: EngineInterface, e: TurnCompleteInput) => {
+  const verb = pickVerb()
+  await changeTurn($, e.turnId, turn => ({ ...turn, durationMs: e.durationMs, verb, endReason: e.reason }))
+  await update($, runningTurnId, () => null)
+
+  const turn = (await read($, turns))[e.turnId]
+  const lastText = turn?.texts.at(-1) ?? ''
+  debug(
+    $,
+    `turn.complete ${e.turnId} reason=${e.reason} tools=${turn?.toolIds.length} texts=${turn?.texts.length} ` +
+      `answerMatchesLastText=${e.answer.trim() === lastText}`,
+  )
+}
+
+// Holds each text block's pieces and lets it out whole, when the next chunk of
+// another kind arrives or the response ends, so a message appears done at once.
+const releaseWholeTextBlocks: Hook<'turn.step'> = async function* ($, e, next) {
+  const stream = next(e)
+  const held: HeldText = { index: -1, text: '' }
+
+  for (;;) {
+    const step = await stream.next()
+
+    if (step.done) {
+      yield* releaseHeld(held)
+      await recordUsage($, e.agentId === undefined, step.value)
+
+      return step.value
+    }
+
+    const chunk = step.value
+
+    if (chunk.kind === 'text') {
+      if (chunk.index !== held.index) {
+        yield* releaseHeld(held)
+        held.index = chunk.index
+      }
+
+      held.text += chunk.text
+      continue
+    }
+
+    yield* releaseHeld(held)
+    yield chunk
+  }
+}
+
+const USER_MESSAGE_ROW = { component: 'UserMessage', surface: TERMINAL } as const
+
+// Records whether the ctrl+o transcript shows. A subagent's finished notice and its
+// message to the main loop belong to the turn that ran it: they fold with the turn
+// and stay hidden while its summary is open, since the copy under the line shows
+// the message there.
+const hideSubagentRows: MatchedHook<'ui.render', typeof USER_MESSAGE_ROW> = async ($, e, next) => {
+  if (e.props.origin.kind === 'composer' && e.props.isExpanded !== isDetailedView) {
+    isDetailedView = e.props.isExpanded
+    debug($, `detailed view ${isDetailedView ? 'open' : 'closed'}`)
+    $.ui.invalidate('ui.render')
+  }
+
+  if (isDetailedView || !(await read($, isFolding))) {
+    return next(e)
+  }
+
+  const turnId = subagentRowTurnId(await read($, turns), e.props)
+
+  if (turnId === undefined) {
+    return next(e)
+  }
+
+  return drawHidden($, e)
+}
+
+const TOOL_USE_ROW = { component: 'ToolUse', surface: TERMINAL } as const
+
+// A finished turn's calls fold away. The calls of the running turn between two
+// notes share one row, which shows the call running now and opens on a click to
+// every call. A call that failed or was cut short gets a red line of its own, so
+// a problem never hides in the row; its output is never drawn.
+const drawToolUse = async ($: EngineInterface, e: RowEvent<typeof TOOL_USE_ROW>, next: RowNext<typeof TOOL_USE_ROW>, settings: Settings) => {
+  const all = await read($, turns)
+
+  if (!(await isFoldingNow($))) {
+    return next(e)
+  }
+
+  const ui = $.ui.resolve(e)
+  const columns = columnsOf(e)
+
+  if (isFoldedTool(all, e.props.tool_use_id)) {
+    debug($, `fold ToolUse ${e.props.tool} ${e.props.tool_use_id} on ${e.surface}`)
+
+    return drawHidden($, e)
+  }
+
+  const call = findCall(all, e.props.tool_use_id)
+
+  if (!settings.compactLiveCalls || call === undefined) {
+    return next(e)
+  }
+
+  if (call.state === 'failed' || e.props.isErrored || e.props.isInterrupted) {
+    return drawFailedCall(ui, call, e.props.isInterrupted ? ' · interrupted' : ' · failed', columns)
+  }
+
+  const run = runCalls(all, call)
+
+  if (run[0]?.id !== call.id) {
+    return drawHidden($, e)
+  }
+
+  const isOpen = (await read($, openRunIds)).includes(call.runId)
+
+  return drawRun(ui, { run, isOpen, onToggle: () => toggleRun($, call.runId), columns })
+}
+
+// The one line stands for the call, so its output draws nothing: the result, an
+// error's text included, and the hint under a running call, such as "ctrl+b to run
+// in background".
+const isCallOutputHidden = async ($: EngineInterface, toolUseId: string, settings: Settings) => {
+  const all = await read($, turns)
+
+  if (!(await isFoldingNow($))) {
+    return false
+  }
+
+  return isFoldedTool(all, toolUseId) || settings.compactLiveCalls
+}
+
+const TOOL_RESULT_ROW = { component: 'ToolResult', surface: TERMINAL } as const
+
+const hideToolResult = async ($: EngineInterface, e: RowEvent<typeof TOOL_RESULT_ROW>, next: RowNext<typeof TOOL_RESULT_ROW>, settings: Settings) => {
+  if (await isCallOutputHidden($, e.props.tool_use_id, settings)) {
+    return drawHidden($, e)
+  }
+
+  return next(e)
+}
+
+const TOOL_PROGRESS_ROW = { component: 'ToolProgress', surface: TERMINAL } as const
+
+const hideToolProgress = async ($: EngineInterface, e: RowEvent<typeof TOOL_PROGRESS_ROW>, next: RowNext<typeof TOOL_PROGRESS_ROW>, settings: Settings) => {
+  if (await isCallOutputHidden($, e.props.tool_use_id, settings)) {
+    return drawHidden($, e)
+  }
+
+  return next(e)
+}
+
+const TOOL_GROUP_ROW = { component: 'ToolGroup', surface: TERMINAL } as const
+
+// A run of reads and searches folds into one count line; a live run opens into
+// one ToolUse row per call, so each gets its own line. A finished turn's run
+// folds away. A run with a call the plugin cannot place keeps the engine's row.
+const drawToolGroup = async ($: EngineInterface, e: RowEvent<typeof TOOL_GROUP_ROW>, next: RowNext<typeof TOOL_GROUP_ROW>, settings: Settings) => {
+  const all = await read($, turns)
+  const knownIds = e.props.calls.flatMap(call => (call.tool_use_id === undefined ? [] : [call.tool_use_id]))
+  const isEveryIdKnown = knownIds.length === e.props.calls.length
+  const isFolded = isEveryIdKnown && knownIds.every(id => isFoldedTool(all, id))
+
+  if (!isEveryIdKnown) {
+    debug($, `ToolGroup on ${e.surface} has calls without tool_use_id`)
+  }
+
+  if (!(await isFoldingNow($)) || e.props.isExpanded) {
+    return next(e)
+  }
+
+  if (isFolded && !e.props.isActive) {
+    return drawHidden($, e)
+  }
+
+  if (isEveryIdKnown && !isFolded && settings.compactLiveCalls) {
+    return next({ ...e, props: { ...e.props, isExpanded: true } })
+  }
+
+  return next(e)
+}
+
+const ASSISTANT_MESSAGE_ROW = { component: 'AssistantMessage', surface: TERMINAL } as const
+
+// A finished turn's notes fold away. Its answer draws under the Worked for line and
+// the summary, and while the summary is open, under the copy of the turn's work.
+const drawAnswer = async ($: EngineInterface, e: RowEvent<typeof ASSISTANT_MESSAGE_ROW>, next: RowNext<typeof ASSISTANT_MESSAGE_ROW>, settings: Settings) => {
+  const all = await read($, turns)
+
+  // The ctrl+o transcript draws every row as the engine does.
+  if (isDetailedView) {
+    return next(e)
+  }
+
+  const isFoldingOn = await read($, isFolding)
+  const ui = $.ui.resolve(e)
+
+  if (isFoldingOn && isFoldedText(all, e.props.text)) {
+    return drawHidden($, e)
+  }
+
+  const turnId = answeredTurnId(all, e.props.text)
+  const turn = turnId === undefined ? undefined : all[turnId]
+
+  if (turnId === undefined || turn === undefined) {
+    return next(e)
+  }
+
+  // The rows above the line stay folded while its summary is open.
+  const isOpen = (await read($, openTurnIds)).includes(turnId)
+  const summary = drawAnswerLine(ui, {
+    lead: describeVerb(turn),
+    rows: summaryGroups(turn, settings),
+    isOpen,
+    onToggle: () => toggleSummary($, turnId),
+  })
+
+  // Open, the turn's work draws under the tree, the way it looked while it ran.
+  // With folding off its rows still show above, so there is nothing to copy.
+  const copy = isOpen && isFoldingOn
+    ? drawTurnCopy(ui, {
+        turn,
+        openRunIds: await read($, openRunIds),
+        onToggleRun: runId => toggleRun($, runId),
+        columns: columnsOf(e),
+      })
+    : null
+
+  return (
+    <ui.Box flexDirection="column" marginTop={1}>
+      {summary}
+      {copy}
+      {await next(e)}
+    </ui.Box>
+  )
+}
+
+// No surface: the desktop draws its own turn footer and raises no TurnDuration.
+const TURN_DURATION_ROW = { component: 'TurnDuration' } as const
+
+// The Worked for line sits above the answer instead.
+const hideTurnDuration: MatchedHook<'ui.render', typeof TURN_DURATION_ROW> = async ($, e, next) => {
+  if (!(await isFoldingNow($))) {
+    return next(e)
+  }
+
+  return drawHidden($, e)
+}
+
 export const register: Register = (on, options) => {
   const settings = readSettings(options)
 
-  on('session.start', async ($, e, next) => {
-    await $.command.register({
-      name: 'tidy-turns',
-      description: 'Toggle folding of finished turns down to their final answer',
-    })
-
-    return next(e)
-  })
-
-  on('command.run', { command: 'tidy-turns' }, async $ => {
-    const isOn = !(await read($, isFolding))
-    await update($, isFolding, () => isOn)
-    $.ui.invalidate('ui.render')
-
-    return { text: `Turn folding ${isOn ? 'on' : 'off'}.` }
-  })
-
-  // A subagent's run raises its own turn.start; it stays part of the main turn.
-  on('turn.start', async ($, e, next) => {
-    if (e.agentId !== undefined) {
-      const agentId = e.agentId
-      await addToRunningTurn($, turn => ({ ...turn, spawnedAgentIds: addOnce(turn.spawnedAgentIds, agentId) }))
-
-      return next(e)
-    }
-
-    await update($, runningTurnId, () => e.turnId)
-    await update($, turns, all => ({ ...all, [e.turnId]: EMPTY_TURN }))
-    debug($, `turn.start ${e.turnId}`)
-
-    return next(e)
-  })
-
-  on('tool.call', async ($, e, next) => {
-    if (e.agentId === undefined) {
-      await addToRunningTurn($, turn => ({ ...turn, calls: withCallState(turn.calls, e.tool_use_id, 'running') }))
-      $.ui.invalidate('ui.render')
-    }
-
-    const result = await next(e)
-    await recordToolCall($, e, result)
-    $.ui.invalidate('ui.render')
-
-    return result
-  })
-
-  on('session.append', { door: 'response' }, async ($, e, next) => {
-    if (e.agentId === undefined && Array.isArray(e.message.content)) {
-      const blocks = replyBlocks(e.message.content)
-
-      if (blocks.length > 0) {
-        const projectRoot = await $.session.root().catch(() => '')
-        await addToRunningTurn($, turn => addReplyBlocks(turn, blocks, projectRoot))
-        $.ui.invalidate('ui.render')
-      }
-    }
-
-    return next(e)
-  })
+  on('session.start', showCommand)
+  on('command.run', TIDY_TURNS_COMMAND, toggleFolding)
+  on('turn.start', recordTurnStart)
+  on('tool.call', trackToolCall)
+  on('session.append', RESPONSE_DOOR, recordReply)
 
   // A message sent while the turn runs arrives as a queued_command attachment. It
   // ends the run before it, so the next call opens a new row below the message
@@ -365,248 +651,13 @@ export const register: Register = (on, options) => {
     })
   }
 
-  on('turn.complete', async ($, e, next) => {
-    if (e.agentId !== undefined) {
-      const answer = e.answer.trim()
-
-      // A subagent can answer after the turn that ran it has ended.
-      const agentId = e.agentId
-      const ownerId = Object.entries(await read($, turns)).find(([, turn]) => turn.spawnedAgentIds.includes(agentId))?.[0]
-
-      if (answer !== '' && ownerId !== undefined) {
-        await changeTurn($, ownerId, owner => ({ ...owner, agentAnswers: [...owner.agentAnswers, answer] }))
-        $.ui.invalidate('ui.render')
-      }
-
-      return next(e)
-    }
-
-    const verb = pickVerb()
-    await changeTurn($, e.turnId, turn => ({ ...turn, durationMs: e.durationMs, verb, endReason: e.reason }))
-    await update($, runningTurnId, () => null)
-
-    const turn = (await read($, turns))[e.turnId]
-    const lastText = turn?.texts.at(-1) ?? ''
-    debug(
-      $,
-      `turn.complete ${e.turnId} reason=${e.reason} tools=${turn?.toolIds.length} texts=${turn?.texts.length} ` +
-        `answerMatchesLastText=${e.answer.trim() === lastText}`,
-    )
-
-    return next(e)
-  })
-
-  // Holds each text block's pieces and lets it out whole, when the next chunk of
-  // another kind arrives or the response ends, so a message appears done at once.
-  on('turn.step', async function* ($, e, next) {
-    const stream = next(e)
-    const held: HeldText = { index: -1, text: '' }
-
-    for (;;) {
-      const step = await stream.next()
-
-      if (step.done) {
-        yield* releaseHeld(held)
-        await recordUsage($, e.agentId === undefined, step.value)
-
-        return step.value
-      }
-
-      const chunk = step.value
-
-      if (chunk.kind === 'text') {
-        if (chunk.index !== held.index) {
-          yield* releaseHeld(held)
-          held.index = chunk.index
-        }
-
-        held.text += chunk.text
-        continue
-      }
-
-      yield* releaseHeld(held)
-      yield chunk
-    }
-  })
-
-  // A subagent's finished notice and its message to the main loop belong to the
-  // turn that ran it: they fold with the turn and stay hidden while its summary is
-  // open, since the copy under the line shows the message there.
-  on('ui.render', { component: 'UserMessage', surface: TERMINAL }, async ($, e, next) => {
-    if (e.props.origin.kind === 'composer' && e.props.isExpanded !== isDetailedView) {
-      isDetailedView = e.props.isExpanded
-      debug($, `detailed view ${isDetailedView ? 'open' : 'closed'}`)
-      $.ui.invalidate('ui.render')
-    }
-
-    if (isDetailedView || !(await read($, isFolding))) {
-      return next(e)
-    }
-
-    const turnId = subagentRowTurnId(await read($, turns), e.props)
-
-    if (turnId === undefined) {
-      return next(e)
-    }
-
-    return drawHidden($, e)
-  })
-
-  // A finished turn's calls fold away. The calls of the running turn between two
-  // notes share one row, which shows the call running now and opens on a click to
-  // every call. A call that failed or was cut short gets a red line of its own, so
-  // a problem never hides in the row; its output is never drawn.
-  on('ui.render', { component: 'ToolUse', surface: TERMINAL }, async ($, e, next) => {
-    const all = await read($, turns)
-
-    if (!(await isFoldingNow($))) {
-      return next(e)
-    }
-
-    const ui = $.ui.resolve(e)
-    const columns = columnsOf(e)
-
-    if (isFoldedTool(all, e.props.tool_use_id)) {
-      debug($, `fold ToolUse ${e.props.tool} ${e.props.tool_use_id} on ${e.surface}`)
-
-      return drawHidden($, e)
-    }
-
-    const call = findCall(all, e.props.tool_use_id)
-
-    if (!settings.compactLiveCalls || call === undefined) {
-      return next(e)
-    }
-
-    if (call.state === 'failed' || e.props.isErrored || e.props.isInterrupted) {
-      return drawFailedCall(ui, call, e.props.isInterrupted ? ' · interrupted' : ' · failed', columns)
-    }
-
-    const run = runCalls(all, call)
-
-    if (run[0]?.id !== call.id) {
-      return drawHidden($, e)
-    }
-
-    const isOpen = (await read($, openRunIds)).includes(call.runId)
-
-    return drawRun(ui, { run, isOpen, onToggle: () => toggleRun($, call.runId), columns })
-  })
-
-  // The one line stands for the call, so its result draws nothing, an error's
-  // text included.
-  on('ui.render', { component: 'ToolResult', surface: TERMINAL }, async ($, e, next) => {
-    const all = await read($, turns)
-
-    if (!(await isFoldingNow($))) {
-      return next(e)
-    }
-
-    if (!isFoldedTool(all, e.props.tool_use_id) && !settings.compactLiveCalls) {
-      return next(e)
-    }
-
-    return drawHidden($, e)
-  })
-
-  // The hint under a running call, such as "ctrl+b to run in background", is output
-  // the one line leaves out.
-  on('ui.render', { component: 'ToolProgress', surface: TERMINAL }, async ($, e, next) => {
-    const all = await read($, turns)
-
-    if (!(await isFoldingNow($)) || !(settings.compactLiveCalls || isFoldedTool(all, e.props.tool_use_id))) {
-      return next(e)
-    }
-
-    return drawHidden($, e)
-  })
-
-  // A run of reads and searches folds into one count line; a live run opens into
-  // one ToolUse row per call, so each gets its own line. A finished turn's run
-  // folds away. A run with a call the plugin cannot place keeps the engine's row.
-  on('ui.render', { component: 'ToolGroup', surface: TERMINAL }, async ($, e, next) => {
-    const all = await read($, turns)
-    const knownIds = e.props.calls.flatMap(call => (call.tool_use_id === undefined ? [] : [call.tool_use_id]))
-    const isEveryIdKnown = knownIds.length === e.props.calls.length
-    const isFolded = isEveryIdKnown && knownIds.every(id => isFoldedTool(all, id))
-
-    if (!isEveryIdKnown) {
-      debug($, `ToolGroup on ${e.surface} has calls without tool_use_id`)
-    }
-
-    if (!(await isFoldingNow($)) || e.props.isExpanded) {
-      return next(e)
-    }
-
-    if (isFolded && !e.props.isActive) {
-      return drawHidden($, e)
-    }
-
-    if (isEveryIdKnown && !isFolded && settings.compactLiveCalls) {
-      return next({ ...e, props: { ...e.props, isExpanded: true } })
-    }
-
-    return next(e)
-  })
-
-  on('ui.render', { component: 'AssistantMessage', surface: TERMINAL }, async ($, e, next) => {
-    const all = await read($, turns)
-
-    // The ctrl+o transcript draws every row as the engine does.
-    if (isDetailedView) {
-      return next(e)
-    }
-
-    const isFoldingOn = await read($, isFolding)
-    const ui = $.ui.resolve(e)
-
-    if (isFoldingOn && isFoldedText(all, e.props.text)) {
-      return drawHidden($, e)
-    }
-
-    const turnId = answeredTurnId(all, e.props.text)
-    const turn = turnId === undefined ? undefined : all[turnId]
-
-    if (turnId === undefined || turn === undefined) {
-      return next(e)
-    }
-
-    // The rows above the line stay folded while its summary is open.
-    const isOpen = (await read($, openTurnIds)).includes(turnId)
-    const summary = drawAnswerLine(ui, {
-      lead: describeVerb(turn),
-      rows: summaryGroups(turn, settings),
-      isOpen,
-      onToggle: () => toggleSummary($, turnId),
-    })
-
-    // Open, the turn's work draws under the tree, the way it looked while it ran.
-    // With folding off its rows still show above, so there is nothing to copy.
-    const copy = isOpen && isFoldingOn
-      ? drawTurnCopy(ui, {
-          turn,
-          openRunIds: await read($, openRunIds),
-          onToggleRun: runId => toggleRun($, runId),
-          columns: columnsOf(e),
-        })
-      : null
-
-    return (
-      <ui.Box flexDirection="column" marginTop={1}>
-        {summary}
-        {copy}
-        {await next(e)}
-      </ui.Box>
-    )
-  })
-
-  // The Worked for line sits above the answer instead. Terminal only: the desktop
-  // draws its own turn footer and raises no TurnDuration.
-  on('ui.render', { component: 'TurnDuration' }, async ($, e, next) => {
-    if (!(await isFoldingNow($))) {
-      return next(e)
-    }
-
-    return drawHidden($, e)
-  })
+  on('turn.complete', recordTurnComplete)
+  on('turn.step', releaseWholeTextBlocks)
+  on('ui.render', USER_MESSAGE_ROW, hideSubagentRows)
+  on('ui.render', TOOL_USE_ROW, ($, e, next) => drawToolUse($, e, next, settings))
+  on('ui.render', TOOL_RESULT_ROW, ($, e, next) => hideToolResult($, e, next, settings))
+  on('ui.render', TOOL_PROGRESS_ROW, ($, e, next) => hideToolProgress($, e, next, settings))
+  on('ui.render', TOOL_GROUP_ROW, ($, e, next) => drawToolGroup($, e, next, settings))
+  on('ui.render', ASSISTANT_MESSAGE_ROW, ($, e, next) => drawAnswer($, e, next, settings))
+  on('ui.render', TURN_DURATION_ROW, hideTurnDuration)
 }

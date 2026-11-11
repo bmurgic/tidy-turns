@@ -10,7 +10,7 @@ const formatDuration = (durationMs: number) => {
 }
 
 // Which summary items the person turned on, from the manifest's userConfig.
-type Settings = {
+export type Settings = {
   compactLiveCalls: boolean
   showToolCount: boolean
   showToolKinds: boolean
