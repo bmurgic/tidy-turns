@@ -34,6 +34,14 @@ import {
   toolRow,
 } from './test-kit'
 
+// The rich turn's summary rows, open, with every item on.
+const RICH_TURN_ROWS = [
+  ['activity', '├─ 6 tool calls · 2 reads · 1 command · 1 agent'],
+  ['changes', '├─ 2 files changed'],
+  ['usage', '├─ Haiku 4.5 · 1.2k tokens'],
+  ['problems', '└─ 1 failed · interrupted'],
+] as const
+
 describe('tidy-turns', () => {
   for (const surface of SURFACES) {
     // The desktop wraps rows in its own chrome, so the mod folds on the terminal only.
@@ -169,13 +177,12 @@ describe('tidy-turns', () => {
     await answer.press({ key: 'tidy-turns:work' })
 
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
-    expect(await row('activity')).toBe('├─ 6 tool calls · 2 reads · 1 command · 1 agent')
-    expect(await row('changes')).toBe('├─ 2 files changed')
-    expect(await row('usage')).toBe('├─ Haiku 4.5 · 1.2k tokens')
-    expect(await row('problems')).toBe('└─ 1 failed · interrupted')
+    for (const [group, text] of RICH_TURN_ROWS) {
+      expect(await row(group)).toBe(text)
+    }
 
     const drawn = JSON.stringify(await answer.drawn())
-    const marks = ['activity', 'changes', 'usage', 'problems'].map(group => `tidy-turns:row:${group}`)
+    const marks = RICH_TURN_ROWS.map(([group]) => `tidy-turns:row:${group}`)
     expect(isDrawnInOrder(drawn, marks)).toBe(true)
   })
 
@@ -252,10 +259,9 @@ describe('tidy-turns', () => {
     await answer.press({ key: 'tidy-turns:work' })
     const row = (group: string) => summaryRowText(answer, group)
 
-    expect(await row('activity')).toBe('├─ 6 tool calls · 2 reads · 1 command · 1 agent')
-    expect(await row('changes')).toBe('├─ 2 files changed')
-    expect(await row('usage')).toBe('├─ Haiku 4.5 · 1.2k tokens')
-    expect(await row('problems')).toBe('└─ 1 failed · interrupted')
+    for (const [group, text] of RICH_TURN_ROWS) {
+      expect(await row(group)).toBe(text)
+    }
   })
 
   test('shows no arrow when the turn has nothing to summarize', async ($, on) => {
@@ -403,6 +409,13 @@ describe('tidy-turns', () => {
 
     const callTool = ($: Engine, id: string, tool = 'Bash') => $.tool.call({ tool, tool_use_id: id, command: 'ls' } as ToolCallArgs)
 
+    // Runs the calls one after another, each to its end.
+    const callTools = async ($: Engine, ...ids: string[]) => {
+      for (const id of ids) {
+        await callTool($, id)
+      }
+    }
+
     // Keeps the call running until the returned function is called.
     const holdCall = ($: Engine, id: string) => {
       let release = () => {}
@@ -421,12 +434,17 @@ describe('tidy-turns', () => {
       await appendReply($, 'live-a', blocks)
     }
 
+    // A running turn with a note, then call a, run to its end.
+    const startNotedCall = async ($: Engine, on: On) => {
+      await startTurn($, on, ['note', { callId: 'a' }])
+      await callTool($, 'a')
+    }
+
     const finishLiveTurn = ($: Engine) =>
       $.turn.complete({ answer: 'Done.', durationMs: 4200, isAborted: false, turnId: 'live', reason: 'answer' })
 
     test('draws a call after a note as one line under it, with the tool and its target', async ($, on) => {
-      await startTurn($, on, ['note', { callId: 'a' }])
-      await callTool($, 'a')
+      await startNotedCall($, on)
       const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual(['  ⎿ Bash ls'])
@@ -453,9 +471,7 @@ describe('tidy-turns', () => {
     })
     test('keeps a run of calls in one row that shows the latest, and hides the others', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }, { callId: 'b' }, { callId: 'c' }])
-      await callTool($, 'a')
-      await callTool($, 'b')
-      await callTool($, 'c')
+      await callTools($, 'a', 'b', 'c')
 
       expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls ▸ 3 calls'])
       expect(isHidden(await (await mountTool($, 'b')).drawn())).toBe(true)
@@ -499,8 +515,7 @@ describe('tidy-turns', () => {
         { callId: 'a', input: { command: 'first' } },
         { callId: 'b', input: { command: 'second' } },
       ])
-      await callTool($, 'a')
-      await callTool($, 'b')
+      await callTools($, 'a', 'b')
       const row = await mountTool($, 'a')
 
       await row.press({ key: 'tidy-turns:call:b' })
@@ -513,8 +528,7 @@ describe('tidy-turns', () => {
     test('starts a new row at each note', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
       await appendReply($, 'live-b', ['note', { callId: 'b' }])
-      await callTool($, 'a')
-      await callTool($, 'b')
+      await callTools($, 'a', 'b')
 
       expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls'])
       expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Bash ls'])
@@ -531,9 +545,7 @@ describe('tidy-turns', () => {
         })
         .catch(storeMissing)
       await appendReply($, 'live-b', [{ callId: 'b' }, { callId: 'c' }])
-      await callTool($, 'a')
-      await callTool($, 'b')
-      await callTool($, 'c')
+      await callTools($, 'a', 'b', 'c')
 
       expect(await linesOf(await mountTool($, 'a'))).toEqual(['⏺ Bash ls'])
       expect(await linesOf(await mountTool($, 'b'))).toEqual(['⏺ Bash ls ▸ 2 calls'])
@@ -547,8 +559,7 @@ describe('tidy-turns', () => {
         { type: 'server_tool_use', id: 'adv', name: 'advisor', input: {} },
         { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'ls' } },
       ])
-      await callTool($, 'a')
-      await callTool($, 'b')
+      await callTools($, 'a', 'b')
 
       expect(await linesOf(await mountTool($, 'a'))).toEqual(['⏺ Bash ls ▸ 3 calls'])
       expect(isHidden(await (await mountTool($, 'adv')).drawn())).toBe(true)
@@ -556,9 +567,7 @@ describe('tidy-turns', () => {
 
     test('draws a failed call as a red line of its own and leaves it out of the row', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'fail' }, { callId: 'b' }, { callId: 'c' }])
-      await callTool($, 'fail')
-      await callTool($, 'b')
-      await callTool($, 'c')
+      await callTools($, 'fail', 'b', 'c')
 
       const failed = await mountTool($, 'fail')
       expect(await linesOf(failed)).toEqual([])
@@ -568,8 +577,7 @@ describe('tidy-turns', () => {
       expect(isHidden(await (await mountTool($, 'c')).drawn())).toBe(true)
     })
     test('draws a call the engine marks errored or interrupted as a red line', async ($, on) => {
-      await startTurn($, on, ['note', { callId: 'a' }])
-      await callTool($, 'a')
+      await startNotedCall($, on)
       const draw = (overrides: object) =>
         $.ui.mount({
           plugin: 'tidy-turns',
@@ -583,8 +591,7 @@ describe('tidy-turns', () => {
     })
     test('folds the row away with the turn', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }, { callId: 'b' }])
-      await callTool($, 'a')
-      await callTool($, 'b')
+      await callTools($, 'a', 'b')
       const row = await mountTool($, 'a')
       expect(await linesOf(row)).toHaveLength(1)
 
@@ -607,8 +614,7 @@ describe('tidy-turns', () => {
     })
 
     test('leaves a group of a finished turn folded and a group it cannot place alone', async ($, on) => {
-      await startTurn($, on, ['note', { callId: 'a' }])
-      await callTool($, 'a')
+      await startNotedCall($, on)
       await finishLiveTurn($)
 
       expect(isHidden(await (await mountGroup($, ['a'], false)).drawn())).toBe(true)
@@ -616,8 +622,7 @@ describe('tidy-turns', () => {
     })
 
     test('leaves the desktop to the engine rows', async ($, on) => {
-      await startTurn($, on, ['note', { callId: 'a' }])
-      await callTool($, 'a')
+      await startNotedCall($, on)
       const row = await mountTool($, 'a', 'desktop')
 
       expect(await linesOf(row)).toEqual([])
@@ -625,8 +630,7 @@ describe('tidy-turns', () => {
     })
 
     test('draws the engine rows while the ctrl+o transcript is open', async ($, on) => {
-      await startTurn($, on, ['note', { callId: 'a' }])
-      await callTool($, 'a')
+      await startNotedCall($, on)
       await mountPrompt($, 'list files', true)
       const row = await mountTool($, 'a')
 
@@ -635,8 +639,7 @@ describe('tidy-turns', () => {
     })
 
     test('draws the engine rows when the setting is off', { options: { compactLiveCalls: false } }, async ($, on) => {
-      await startTurn($, on, ['note', { callId: 'a' }])
-      await callTool($, 'a')
+      await startNotedCall($, on)
       const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual([])
