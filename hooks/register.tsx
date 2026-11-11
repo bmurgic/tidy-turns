@@ -1,7 +1,9 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, PluginOptions, Register, ToolCallInput, ToolCallResult, TurnStepChunk, TurnStepResult } from 'claude-code'
+import type { EngineInterface, Register, ToolCallInput, ToolCallResult, TurnStepChunk, TurnStepResult } from 'claude-code'
 
 import type { LiveCall, Turn, Turns } from '../types'
+import { describeVerb, readSettings, summaryGroups } from './summary'
+import { CLAUDE_ORANGE, DEFAULT_COLUMNS, DETAILS_HOVER, drawFailedCall, drawRun, drawTurnCopy, ERROR_RED } from './turn-view'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
 const runningTurnId = atom({ plugin: 'tidy-turns', key: 'runningTurnId' } as const, null)
@@ -94,20 +96,6 @@ const callTarget = (input: unknown, projectRoot: string) => {
   return firstLine.length > MAX_TARGET_LENGTH ? `${firstLine.slice(0, MAX_TARGET_LENGTH - 1)}…` : firstLine
 }
 
-// Cells the row leaves free at the right edge; a line never reaches it.
-const ROW_MARGIN = 4
-
-const DEFAULT_COLUMNS = 80
-
-const MIN_LINE_LENGTH = 12
-
-// A line cut with a … so it and its suffix fit in one row of the terminal, never wrapping.
-const fitLine = (line: string, suffix: string, columns: number) => {
-  const room = Math.max(columns - ROW_MARGIN - suffix.length, MIN_LINE_LENGTH)
-
-  return `${line.length > room ? `${line.slice(0, room - 1)}…` : line}${suffix}`
-}
-
 // The calls of a run that are not failed: a failed call has a red line of its own.
 const runCalls = (all: Turns, call: LiveCall) =>
   Object.values(all)
@@ -118,27 +106,6 @@ const findCall = (all: Turns, toolUseId: string) =>
   Object.values(all)
     .flatMap(turn => turn.calls)
     .find(call => call.id === toolUseId)
-
-// The calls a run's row shows: all of them once opened; closed, the ones running
-// now, or the latest call to start when none is.
-const shownCalls = (run: LiveCall[], isOpen: boolean) => {
-  const running = run.filter(call => call.state === 'running')
-  const latest = run.findLast(call => call.state !== 'queued') ?? run[0]
-
-  if (isOpen) {
-    return run
-  }
-
-  return running.length > 0 ? running : latest === undefined ? [] : [latest]
-}
-
-// A call's line: after a note it hangs under it with ⎿, and with none before it
-// the line is its own, led by the reply bullet. Later lines of a row line up under the first.
-const describeCall = (call: LiveCall, isFirstLine: boolean) => {
-  const lead = call.isNoted ? (isFirstLine ? '  ⎿ ' : '    ') : isFirstLine ? '⏺ ' : '  '
-
-  return `${lead}${[call.tool, call.target].filter(part => part !== '').join(' ')}`
-}
 
 // Records one tool call into the running turn once it ends: the main loop's calls by
 // id, tool and outcome, a subagent's by its id, and the file any edit that worked changed.
@@ -189,6 +156,7 @@ const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: string): 
       target: callTarget(block.input, projectRoot),
       runId: isNewRun ? block.id : previous.runId,
       isNoted: texts.length > 0,
+      textsBefore: texts.length,
       state: block.isServerRun ? 'done' : 'queued',
     })
     isAfterText = false
@@ -250,198 +218,6 @@ const subagentRowTurnId = (all: Turns, row: { text: string; task?: { toolUseId?:
         (row.from !== undefined && turn.agentAnswers.includes(row.text.trim()))),
   )?.[0]
 
-const formatDuration = (durationMs: number) => {
-  const seconds = Math.round(durationMs / 1000)
-  const minutes = Math.floor(seconds / 60)
-
-  return minutes > 0 ? `${minutes}m ${seconds % 60}s` : `${seconds}s`
-}
-
-// Which summary items the person turned on, from the manifest's userConfig.
-type Settings = {
-  compactLiveCalls: boolean
-  showToolCount: boolean
-  showToolKinds: boolean
-  showSubagents: boolean
-  showFilesChanged: boolean
-  showFailures: boolean
-  showEndReason: boolean
-  showSessionTools: boolean
-  showTokens: boolean
-  showModel: boolean
-  showSkills: boolean
-  showToolSearches: boolean
-  showMcpCalls: boolean
-}
-
-const readSettings = (options: PluginOptions): Settings => ({
-  compactLiveCalls: options.compactLiveCalls !== false,
-  showToolCount: options.showToolCount !== false,
-  showToolKinds: options.showToolKinds !== false,
-  showSubagents: options.showSubagents !== false,
-  showFilesChanged: options.showFilesChanged !== false,
-  showFailures: options.showFailures !== false,
-  showEndReason: options.showEndReason !== false,
-  showSessionTools: options.showSessionTools !== false,
-  showTokens: options.showTokens !== false,
-  showModel: options.showModel !== false,
-  showSkills: options.showSkills !== false,
-  showToolSearches: options.showToolSearches !== false,
-  showMcpCalls: options.showMcpCalls !== false,
-})
-
-const plural = (count: number, one: string, many: string) => `${count} ${count === 1 ? one : many}`
-
-// A kind of tool call, as the summary counts it. A kind with an item of its own
-// is counted there while that item is on, and among the kinds while it is off.
-type Kind = { one: string; many: string; item?: keyof Settings }
-
-const kind = (one: string, many: string, item?: keyof Settings): Kind => ({ one, many, item })
-
-const SKILL = kind('skill', 'skills', 'showSkills')
-const TOOL_SEARCH = kind('tool search', 'tool searches', 'showToolSearches')
-const MCP_CALL = kind('MCP call', 'MCP calls', 'showMcpCalls')
-const OTHER = kind('other', 'other')
-
-const session = (one: string, many: string) => kind(one, many, 'showSessionTools')
-const SCHEDULE = session('schedule', 'schedules')
-const PLAN_MODE = session('plan mode', 'plan modes')
-const WORKTREE = session('worktree', 'worktrees')
-const PLUGIN_LOOKUP = session('plugin lookup', 'plugin lookups')
-
-// Each tool's kind. An MCP tool, named mcp__<server>__<tool>, is an MCP call;
-// any other tool not listed is "other".
-const TOOL_KINDS: Record<string, Kind> = {
-  Read: kind('read', 'reads'),
-  Grep: kind('search', 'searches'),
-  Glob: kind('search', 'searches'),
-  LS: kind('search', 'searches'),
-  Edit: kind('edit', 'edits', 'showFilesChanged'),
-  MultiEdit: kind('edit', 'edits', 'showFilesChanged'),
-  Write: kind('edit', 'edits', 'showFilesChanged'),
-  NotebookEdit: kind('edit', 'edits', 'showFilesChanged'),
-  Bash: kind('command', 'commands'),
-  BashOutput: kind('command', 'commands'),
-  KillShell: kind('command', 'commands'),
-  WebFetch: kind('web lookup', 'web lookups'),
-  WebSearch: kind('web lookup', 'web lookups'),
-  Agent: kind('agent', 'agents', 'showSubagents'),
-  Task: kind('agent', 'agents', 'showSubagents'),
-  Skill: SKILL,
-  ToolSearch: TOOL_SEARCH,
-  ListMcpResourcesTool: MCP_CALL,
-  ReadMcpResourceTool: MCP_CALL,
-  ReadMcpResourceDirTool: MCP_CALL,
-  Monitor: session('monitor', 'monitors'),
-  TaskStop: session('task stop', 'task stops'),
-  SendMessage: session('message', 'messages'),
-  ListAgents: session('agent list', 'agent lists'),
-  Workflow: session('workflow', 'workflows'),
-  advisor: session('advisor call', 'advisor calls'),
-  CronCreate: SCHEDULE,
-  CronDelete: SCHEDULE,
-  CronList: SCHEDULE,
-  EnterPlanMode: PLAN_MODE,
-  ExitPlanMode: PLAN_MODE,
-  EnterWorktree: WORKTREE,
-  ExitWorktree: WORKTREE,
-  PushNotification: session('notification', 'notifications'),
-  RemoteTrigger: session('remote trigger', 'remote triggers'),
-  SendUserFile: session('file sent', 'files sent'),
-  TodoWrite: session('todo update', 'todo updates'),
-  AskUserQuestion: session('question', 'questions'),
-  ListPlugins: PLUGIN_LOOKUP,
-  SearchPlugins: PLUGIN_LOOKUP,
-  SuggestPluginInstall: PLUGIN_LOOKUP,
-  ListSkills: PLUGIN_LOOKUP,
-  SearchSkills: PLUGIN_LOOKUP,
-  SuggestSkills: PLUGIN_LOOKUP,
-}
-
-const kindOf = (toolName: string) => TOOL_KINDS[toolName] ?? (toolName.startsWith('mcp__') ? MCP_CALL : OTHER)
-
-// The turn's tool calls of the kinds `isCounted` picks, by kind, most first.
-const describeKinds = (toolNames: string[], isCounted: (kind: Kind) => boolean) => {
-  const counts = new Map<string, { kind: Kind; count: number }>()
-
-  for (const name of toolNames) {
-    const toolKind = kindOf(name)
-
-    if (isCounted(toolKind)) {
-      const count = (counts.get(toolKind.one)?.count ?? 0) + 1
-      counts.set(toolKind.one, { kind: toolKind, count })
-    }
-  }
-
-  return [...counts.values()]
-    .sort((a, b) => b.count - a.count || a.kind.one.localeCompare(b.kind.one))
-    .map(({ kind: { one, many }, count }) => plural(count, one, many))
-}
-
-const countKind = (toolNames: string[], wanted: Kind) => {
-  const count = toolNames.filter(name => kindOf(name) === wanted).length
-
-  return count === 0 ? '' : plural(count, wanted.one, wanted.many)
-}
-
-const formatTokens = (count: number) => (count < 1000 ? `${count} tokens` : `${(count / 1000).toFixed(1).replace(/\.0$/, '')}k tokens`)
-
-// "claude-haiku-4-5-20251001" reads as "Haiku 4.5"; a name of another shape as given.
-const formatModel = (model: string) => {
-  const match = /^claude-([a-z]+)-(\d+)(?:-(\d))?(?:-|$)/.exec(model)
-
-  if (match === null) {
-    return model
-  }
-
-  const family = match[1] ?? ''
-  const version = match[3] === undefined ? match[2] : `${match[2]}.${match[3]}`
-
-  return `${family.charAt(0).toUpperCase()}${family.slice(1)} ${version}`
-}
-
-const END_REASONS: Record<string, string> = { aborted: 'interrupted', refusal: 'refused', error: 'errored' }
-
-type SummaryGroup = { name: 'activity' | 'changes' | 'session' | 'usage' | 'problems'; text: string }
-
-// The summary's groups in the order they show, each the turned-on items it has
-// something for; a group with nothing is left out.
-const summaryGroups = (turn: Turn, settings: Settings): SummaryGroup[] => {
-  const calls = turn.toolIds.length
-  const activity = [
-    settings.showToolCount && calls > 0 ? plural(calls, 'tool call', 'tool calls') : '',
-    // A kind whose own item is on is counted there instead.
-    ...(settings.showToolKinds ? describeKinds(turn.toolNames, toolKind => toolKind.item === undefined || !settings[toolKind.item]) : []),
-    settings.showSubagents && turn.agentIds.length > 0 ? plural(turn.agentIds.length, 'agent', 'agents') : '',
-  ]
-  const changes = [settings.showFilesChanged && turn.files.length > 0 ? `${plural(turn.files.length, 'file', 'files')} changed` : '']
-  const sessionTools = settings.showSessionTools ? describeKinds(turn.toolNames, toolKind => toolKind.item === 'showSessionTools') : []
-  const usage = [
-    settings.showModel && turn.model !== undefined ? formatModel(turn.model) : '',
-    settings.showTokens && turn.outputTokens > 0 ? formatTokens(turn.outputTokens) : '',
-    settings.showSkills ? countKind(turn.toolNames, SKILL) : '',
-    settings.showToolSearches ? countKind(turn.toolNames, TOOL_SEARCH) : '',
-    settings.showMcpCalls ? countKind(turn.toolNames, MCP_CALL) : '',
-  ]
-  const problems = [
-    settings.showFailures && turn.failedCount > 0 ? `${turn.failedCount} failed` : '',
-    settings.showEndReason ? (END_REASONS[turn.endReason ?? 'answer'] ?? '') : '',
-  ]
-  const groups: SummaryGroup[] = [
-    { name: 'activity', text: joinItems(activity) },
-    { name: 'changes', text: joinItems(changes) },
-    { name: 'session', text: joinItems(sessionTools) },
-    { name: 'usage', text: joinItems(usage) },
-    { name: 'problems', text: joinItems(problems) },
-  ]
-
-  return groups.filter(group => group.text !== '')
-}
-
-const joinItems = (items: string[]) => items.filter(item => item !== '').join(' · ')
-
-const describeVerb = (turn: Turn) => `${turn.verb ?? 'Worked'} for ${formatDuration(turn.durationMs ?? 0)}`
-
 // A click on a Worked for line opens or closes that turn's summary alone.
 const toggleSummary = async ($: EngineInterface, turnId: string) => {
   await update($, openTurnIds, ids => (ids.includes(turnId) ? ids.filter(id => id !== turnId) : [...ids, turnId]))
@@ -453,15 +229,6 @@ const toggleRun = async ($: EngineInterface, runId: string) => {
   await update($, openRunIds, ids => (ids.includes(runId) ? ids.filter(id => id !== runId) : [...ids, runId]))
   $.ui.invalidate('ui.render')
 }
-
-// The theme key Claude Code draws errors in, for the problems group.
-const ERROR_RED = 'error'
-
-// The details' hover: the text at full strength, never a block behind it.
-const DETAILS_HOVER = { dimColor: false, inverse: false }
-
-// The theme key of the orange Claude Code marks its spinner with.
-const CLAUDE_ORANGE = 'claude'
 
 // The Worked for line's hover: the whole line bold in Claude's orange, never a
 // block behind it.
@@ -646,7 +413,8 @@ export const register: Register = (on, options) => {
   })
 
   // A subagent's finished notice and its message to the main loop belong to the
-  // turn that ran it: they fold with the turn and show while its summary is open.
+  // turn that ran it: they fold with the turn and stay hidden while its summary is
+  // open, since the copy under the line shows the message there.
   on('ui.render', { component: 'UserMessage', surface: TERMINAL }, async ($, e, next) => {
     if (e.props.origin.kind === 'composer' && e.props.isExpanded !== isDetailedView) {
       isDetailedView = e.props.isExpanded
@@ -660,7 +428,7 @@ export const register: Register = (on, options) => {
 
     const turnId = subagentRowTurnId(await read($, turns), e.props)
 
-    if (turnId === undefined || (await read($, openTurnIds)).includes(turnId)) {
+    if (turnId === undefined) {
       return next(e)
     }
 
@@ -680,13 +448,13 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
     const columns = e.viewport?.columns ?? DEFAULT_COLUMNS
 
     if (isFoldedTool(all, e.props.tool_use_id)) {
       debug($, `fold ToolUse ${e.props.tool} ${e.props.tool_use_id} on ${e.surface}`)
 
-      return <Box display="none" />
+      return <ui.Box display="none" />
     }
 
     const call = findCall(all, e.props.tool_use_id)
@@ -696,35 +464,18 @@ export const register: Register = (on, options) => {
     }
 
     if (call.state === 'failed' || e.props.isErrored || e.props.isInterrupted) {
-      return (
-        <Box marginTop={call.isNoted ? 0 : 1}>
-          <Text color={ERROR_RED}>{fitLine(describeCall(call, true), e.props.isInterrupted ? ' · interrupted' : ' · failed', columns)}</Text>
-        </Box>
-      )
+      return drawFailedCall(ui, call, e.props.isInterrupted ? ' · interrupted' : ' · failed', columns)
     }
 
     const run = runCalls(all, call)
 
     if (run[0]?.id !== call.id) {
-      return <Box display="none" />
+      return <ui.Box display="none" />
     }
 
     const isOpen = (await read($, openRunIds)).includes(call.runId)
-    const toggle = () => toggleRun($, call.runId)
-    // A run under a note sits against it; one with no note is set off by a blank line.
-    const note = run.length === 1 ? '' : isOpen ? ' ▾' : ` ▸ ${run.length} calls`
 
-    return (
-      <Box flexDirection="column" alignSelf="flex-start" marginTop={call.isNoted ? 0 : 1}>
-        {shownCalls(run, isOpen).map((shown, index) => (
-          <Box key={`tidy-turns:call:${shown.id}:scope`}>
-            <Button key={`tidy-turns:call:${shown.id}`} plain dimColor hover={DETAILS_HOVER} onPress={toggle}>
-              <Text>{fitLine(describeCall(shown, index === 0), index === 0 ? note : '', columns)}</Text>
-            </Button>
-          </Box>
-        ))}
-      </Box>
-    )
+    return drawRun(ui, { run, isOpen, onToggle: () => toggleRun($, call.runId), columns })
   })
 
   // The one line stands for the call, so its result draws nothing, an error's
@@ -798,7 +549,8 @@ export const register: Register = (on, options) => {
     }
 
     const isFolded = await read($, isFolding)
-    const { Box, Button, Text } = $.ui.resolve(e)
+    const ui = $.ui.resolve(e)
+    const { Box, Button, Text } = ui
 
     if (isFolded && isFoldedText(all, e.props.text)) {
       return <Box display="none" />
@@ -812,7 +564,7 @@ export const register: Register = (on, options) => {
     }
 
     // The summary sits under the line as a tree a click opens and closes; the
-    // work stays folded. A turn with no summary has nothing to open, so no arrow
+    // rows above the line stay folded. A turn with no summary has nothing to open, so no arrow
     // and no click. Each row sits in a keyed Box, its own hover scope.
     const isOpen = (await read($, openTurnIds)).includes(turnId)
     const toggle = () => toggleSummary($, turnId)
@@ -863,9 +615,21 @@ export const register: Register = (on, options) => {
       </Box>
     )
 
+    // Open, the turn's work draws under the tree, the way it looked while it ran.
+    // With folding off its rows still show above, so there is nothing to copy.
+    const copy = isOpen && isFolded
+      ? drawTurnCopy(ui, {
+          turn,
+          openRunIds: await read($, openRunIds),
+          onToggleRun: runId => toggleRun($, runId),
+          columns: e.viewport?.columns ?? DEFAULT_COLUMNS,
+        })
+      : null
+
     return (
       <Box flexDirection="column" marginTop={1}>
         {summary}
+        {copy}
         {await next(e)}
       </Box>
     )

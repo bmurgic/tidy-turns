@@ -8,6 +8,8 @@ export type LiveCall = {
   runId: string
   /** True when a text block of the turn came before the run, so the run sits under a note. */
   isNoted: boolean
+  /** How many of the turn's text blocks were stored before the call, so an open turn's copy draws its run under the right note. */
+  textsBefore: number
   state: 'queued' | 'running' | 'done' | 'failed'
 }
 

@@ -7,7 +7,7 @@ A Claude Code plugin that cleans up finished turns in the terminal. When a turn 
 ⏺ Done.
 ```
 
-Click the line to open a summary of the turn under it:
+Click the line to open the turn under it. A summary comes first, then the turn's work the way it looked while it ran:
 
 ```
 ✻ Sautéed for 7s ▾
@@ -15,10 +15,21 @@ Click the line to open a summary of the turn under it:
 ├─ 1 file changed
 ├─ Haiku 4.5 · 519 tokens
 └─ 1 failed
+
+⏺ Let me check the config.
+  ⎿ Read ~/app/config.toml ▸ 2 calls
+
+⏺ The port is wrong. Fixing it.
+  ⎿ Bash false · failed
+  ⎿ Edit ~/app/config.toml
+
+› The port is set in two places.
 ⏺ Done.
 ```
 
-While the summary is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close the summary. The folded work stays hidden either way.
+While the turn is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close it. The line stays where it is either way, so you can open and close a turn without moving the mouse.
+
+The work under an open line is a copy the plugin draws from what it recorded: Claude's notes, each run of tool calls as one row, failed calls in red, and the first line of each subagent's answer. It has no tool output and no diffs. Click a run's row to open every call in it. Subagent answers come last, just above the answer. The rows the turn first drew above the line stay hidden.
 
 ## What it changes
 
@@ -31,7 +42,7 @@ The desktop app draws turns its own way, so the plugin folds nothing there.
 
 ## What it hooks
 
-The plugin is one hooks module, `hooks/register.tsx`. It hooks these events:
+The plugin is one hooks module, `hooks/register.tsx`, which draws with `hooks/turn-view.tsx` and builds the summary with `hooks/summary.ts`. It hooks these events:
 
 | Event | What the hook does |
 | --- | --- |
@@ -41,7 +52,7 @@ The plugin is one hooks module, `hooks/register.tsx`. It hooks these events:
 | `tool.call` | Counts the turn's tool calls by tool name, and notes which failed and which files an edit changed. It passes every call on unchanged and never makes a call of its own. |
 | `session.append` for responses | Records the text of each reply, so the plugin can tell working notes from the final answer. |
 | `turn.step` | Holds each reply's text until the block is whole, then passes it on. Adds each model request's output token count, and records the model name. |
-| `ui.render` | Draws the folded turn, the `✻ Verb for 7s` line, and the summary in the terminal. Draws a running turn's tool calls as one line each, and opens a live group of reads and searches into one line per call. |
+| `ui.render` | Draws the folded turn, the `✻ Verb for 7s` line, the summary, and the open turn's copy of its work in the terminal. Draws a running turn's tool calls as one line each, and opens a live group of reads and searches into one line per call. |
 
 Everything it records stays in the session's plugin state (`$.state`), and it writes debug lines to Claude Code's own debug log. The plugin makes no network requests, runs no programs, reads no files or environment variables, and asks for no credentials. "Tokens" in this README and in the `showTokens` setting means the model's output token count, not an access token.
 
@@ -76,7 +87,7 @@ claude plugin install tidy-turns@tidy-turns
 ## Use it
 
 - **Read the answer.** When a turn finishes, its work folds away and the answer shows under a dim `✻ Verb for 7s ▸` line.
-- **Open the summary.** Click the line. The summary opens under that turn only, and the arrow turns to `▾`. Click the line or any summary row to close it. Each turn remembers its own state.
+- **Open a turn.** Click the line. The summary and the turn's work open under that turn only, and the arrow turns to `▾`. Click the line or any summary row to close it. Each turn remembers its own state.
 - **Show the folded work.** Run `/tidy-turns` to turn folding off for the session, and run it again to turn folding back on. Press ctrl+o to see every row in the transcript view without changing anything.
 
 A turn with nothing to summarize shows `✻ Verb for 7s` with no arrow, and clicking it does nothing.
