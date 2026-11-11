@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Register, ToolCallInput, ToolCallResult, TurnStepChunk, TurnStepResult } from 'claude-code'
+import type { EngineInterface, Register, RenderViewport, ResolveInput, ToolCallInput, ToolCallResult, TurnStepChunk, TurnStepResult } from 'claude-code'
 
 import type { LiveCall, Turn, Turns } from '../types'
 import { describeVerb, readSettings, summaryGroups } from './summary'
@@ -22,6 +22,10 @@ const pickVerb = () => VERBS[randomIndex(VERBS.length)] ?? 'Worked'
 
 const debug = ($: EngineInterface, text: string) => $.ui.log(`tidy-turns: ${text}`, { to: 'debug' })
 
+// A turn not yet stored starts empty.
+const changeTurn = ($: EngineInterface, turnId: string, change: (turn: Turn) => Turn) =>
+  update($, turns, all => ({ ...all, [turnId]: change(all[turnId] ?? EMPTY_TURN) }))
+
 const addToRunningTurn = async ($: EngineInterface, change: (turn: Turn) => Turn) => {
   const turnId = await read($, runningTurnId)
 
@@ -29,7 +33,7 @@ const addToRunningTurn = async ($: EngineInterface, change: (turn: Turn) => Turn
     return
   }
 
-  await update($, turns, all => ({ ...all, [turnId]: change(all[turnId] ?? EMPTY_TURN) }))
+  await changeTurn($, turnId, change)
 }
 
 const addOnce = (list: string[], item: string) => (list.includes(item) ? list : [...list, item])
@@ -58,13 +62,15 @@ const MAX_TARGET_LENGTH = 200
 
 const PATH_FIELDS = ['file_path', 'notebook_path']
 
+const pathSegments = (path: string) => path.split('/').filter(segment => segment !== '')
+
 // A file as `~/project/name`: the folder the session's project root sits in, or for
 // a file outside the project the folder the file sits in, then the file's name.
 const fileLabel = (path: string, projectRoot: string) => {
-  const segments = path.split('/').filter(segment => segment !== '')
+  const segments = pathSegments(path)
   const name = segments.at(-1) ?? path
   const isInProject = !path.startsWith('/') || (projectRoot !== '' && path.startsWith(`${projectRoot}/`))
-  const folder = isInProject ? projectRoot.split('/').filter(segment => segment !== '').at(-1) : segments.at(-2)
+  const folder = isInProject ? pathSegments(projectRoot).at(-1) : segments.at(-2)
 
   return folder === undefined ? name : `~/${folder}/${name}`
 }
@@ -74,7 +80,7 @@ const fileLabel = (path: string, projectRoot: string) => {
 const HOME_FOLDER = /\/(?:Users|home)\/[^/\s"']+/g
 
 const shortenPaths = (text: string, projectRoot: string) => {
-  const project = projectRoot.split('/').filter(segment => segment !== '').at(-1)
+  const project = pathSegments(projectRoot).at(-1)
   const withProject = projectRoot === '' || project === undefined ? text : text.replaceAll(projectRoot, `~/${project}`)
 
   return withProject.replace(HOME_FOLDER, '~')
@@ -96,16 +102,12 @@ const callTarget = (input: unknown, projectRoot: string) => {
   return firstLine.length > MAX_TARGET_LENGTH ? `${firstLine.slice(0, MAX_TARGET_LENGTH - 1)}…` : firstLine
 }
 
-// The calls of a run that are not failed: a failed call has a red line of its own.
-const runCalls = (all: Turns, call: LiveCall) =>
-  Object.values(all)
-    .flatMap(turn => turn.calls)
-    .filter(other => other.runId === call.runId && other.state !== 'failed')
+const allCalls = (all: Turns) => Object.values(all).flatMap(turn => turn.calls)
 
-const findCall = (all: Turns, toolUseId: string) =>
-  Object.values(all)
-    .flatMap(turn => turn.calls)
-    .find(call => call.id === toolUseId)
+// The calls of a run that are not failed: a failed call has a red line of its own.
+const runCalls = (all: Turns, call: LiveCall) => allCalls(all).filter(other => other.runId === call.runId && other.state !== 'failed')
+
+const findCall = (all: Turns, toolUseId: string) => allCalls(all).find(call => call.id === toolUseId)
 
 // Records one tool call into the running turn once it ends: the main loop's calls by
 // id, tool and outcome, a subagent's by its id, and the file any edit that worked changed.
@@ -191,6 +193,16 @@ const replyBlocks = (content: unknown[]): ReplyBlock[] =>
 // there leaves the header over a blank body. The row hooks match the terminal only.
 const TERMINAL = 'terminal'
 
+// What a row hook draws in place of a row it folds away.
+const drawHidden = ($: EngineInterface, e: ResolveInput) => {
+  const { Box } = $.ui.resolve(e)
+
+  return <Box display="none" />
+}
+
+// The width a drawing fits its lines to; DEFAULT_COLUMNS where no surface has measured.
+const columnsOf = (e: { viewport?: RenderViewport }) => e.viewport?.columns ?? DEFAULT_COLUMNS
+
 const finishedTurns = (all: Turns) => Object.values(all).filter(turn => turn.durationMs !== undefined)
 
 const isFoldedTool = (all: Turns, toolUseId: string) => finishedTurns(all).some(turn => turn.toolIds.includes(toolUseId))
@@ -218,15 +230,17 @@ const subagentRowTurnId = (all: Turns, row: { text: string; task?: { toolUseId?:
         (row.from !== undefined && turn.agentAnswers.includes(row.text.trim()))),
   )?.[0]
 
+const toggleId = (ids: string[], id: string) => (ids.includes(id) ? ids.filter(other => other !== id) : [...ids, id])
+
 // A click on a Worked for line opens or closes that turn's summary alone.
 const toggleSummary = async ($: EngineInterface, turnId: string) => {
-  await update($, openTurnIds, ids => (ids.includes(turnId) ? ids.filter(id => id !== turnId) : [...ids, turnId]))
+  await update($, openTurnIds, ids => toggleId(ids, turnId))
   $.ui.invalidate('ui.render')
 }
 
 // A click on a run's row opens it to every call, or closes it again.
 const toggleRun = async ($: EngineInterface, runId: string) => {
-  await update($, openRunIds, ids => (ids.includes(runId) ? ids.filter(id => id !== runId) : [...ids, runId]))
+  await update($, openRunIds, ids => toggleId(ids, runId))
   $.ui.invalidate('ui.render')
 }
 
@@ -354,7 +368,7 @@ export const register: Register = (on, options) => {
       const ownerId = Object.entries(await read($, turns)).find(([, turn]) => turn.spawnedAgentIds.includes(agentId))?.[0]
 
       if (answer !== '' && ownerId !== undefined) {
-        await update($, turns, all => ({ ...all, [ownerId]: { ...(all[ownerId] ?? EMPTY_TURN), agentAnswers: [...(all[ownerId]?.agentAnswers ?? []), answer] } }))
+        await changeTurn($, ownerId, owner => ({ ...owner, agentAnswers: [...owner.agentAnswers, answer] }))
         $.ui.invalidate('ui.render')
       }
 
@@ -362,10 +376,7 @@ export const register: Register = (on, options) => {
     }
 
     const verb = pickVerb()
-    await update($, turns, all => ({
-      ...all,
-      [e.turnId]: { ...(all[e.turnId] ?? EMPTY_TURN), durationMs: e.durationMs, verb, endReason: e.reason },
-    }))
+    await changeTurn($, e.turnId, turn => ({ ...turn, durationMs: e.durationMs, verb, endReason: e.reason }))
     await update($, runningTurnId, () => null)
 
     const turn = (await read($, turns))[e.turnId]
@@ -432,9 +443,7 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    const { Box } = $.ui.resolve(e)
-
-    return <Box display="none" />
+    return drawHidden($, e)
   })
 
   // A finished turn's calls fold away. The calls of the running turn between two
@@ -449,12 +458,12 @@ export const register: Register = (on, options) => {
     }
 
     const ui = $.ui.resolve(e)
-    const columns = e.viewport?.columns ?? DEFAULT_COLUMNS
+    const columns = columnsOf(e)
 
     if (isFoldedTool(all, e.props.tool_use_id)) {
       debug($, `fold ToolUse ${e.props.tool} ${e.props.tool_use_id} on ${e.surface}`)
 
-      return <ui.Box display="none" />
+      return drawHidden($, e)
     }
 
     const call = findCall(all, e.props.tool_use_id)
@@ -470,7 +479,7 @@ export const register: Register = (on, options) => {
     const run = runCalls(all, call)
 
     if (run[0]?.id !== call.id) {
-      return <ui.Box display="none" />
+      return drawHidden($, e)
     }
 
     const isOpen = (await read($, openRunIds)).includes(call.runId)
@@ -491,9 +500,7 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    const { Box } = $.ui.resolve(e)
-
-    return <Box display="none" />
+    return drawHidden($, e)
   })
 
   // The hint under a running call, such as "ctrl+b to run in background", is output
@@ -505,9 +512,7 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    const { Box } = $.ui.resolve(e)
-
-    return <Box display="none" />
+    return drawHidden($, e)
   })
 
   // A run of reads and searches folds into one count line; a live run opens into
@@ -515,9 +520,9 @@ export const register: Register = (on, options) => {
   // folds away. A run with a call the plugin cannot place keeps the engine's row.
   on('ui.render', { component: 'ToolGroup', surface: TERMINAL }, async ($, e, next) => {
     const all = await read($, turns)
-    const ids = e.props.calls.map(call => call.tool_use_id)
-    const isEveryIdKnown = ids.every(id => id !== undefined)
-    const isFolded = isEveryIdKnown && ids.every(id => isFoldedTool(all, id as string))
+    const knownIds = e.props.calls.flatMap(call => (call.tool_use_id === undefined ? [] : [call.tool_use_id]))
+    const isEveryIdKnown = knownIds.length === e.props.calls.length
+    const isFolded = isEveryIdKnown && knownIds.every(id => isFoldedTool(all, id))
 
     if (!isEveryIdKnown) {
       debug($, `ToolGroup on ${e.surface} has calls without tool_use_id`)
@@ -528,9 +533,7 @@ export const register: Register = (on, options) => {
     }
 
     if (isFolded && !e.props.isActive) {
-      const { Box } = $.ui.resolve(e)
-
-      return <Box display="none" />
+      return drawHidden($, e)
     }
 
     if (isEveryIdKnown && !isFolded && settings.compactLiveCalls) {
@@ -548,12 +551,12 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    const isFolded = await read($, isFolding)
+    const isFoldingOn = await read($, isFolding)
     const ui = $.ui.resolve(e)
     const { Box, Button, Text } = ui
 
-    if (isFolded && isFoldedText(all, e.props.text)) {
-      return <Box display="none" />
+    if (isFoldingOn && isFoldedText(all, e.props.text)) {
+      return drawHidden($, e)
     }
 
     const turnId = answeredTurnId(all, e.props.text)
@@ -617,12 +620,12 @@ export const register: Register = (on, options) => {
 
     // Open, the turn's work draws under the tree, the way it looked while it ran.
     // With folding off its rows still show above, so there is nothing to copy.
-    const copy = isOpen && isFolded
+    const copy = isOpen && isFoldingOn
       ? drawTurnCopy(ui, {
           turn,
           openRunIds: await read($, openRunIds),
           onToggleRun: runId => toggleRun($, runId),
-          columns: e.viewport?.columns ?? DEFAULT_COLUMNS,
+          columns: columnsOf(e),
         })
       : null
 
@@ -642,8 +645,6 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    const { Box } = $.ui.resolve(e)
-
-    return <Box display="none" />
+    return drawHidden($, e)
   })
 }
