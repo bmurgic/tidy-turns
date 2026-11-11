@@ -264,12 +264,11 @@ describe('tidy-turns', () => {
     }
   })
 
-  test('shows no arrow when the turn has nothing to summarize', async ($, on) => {
+  test('shows no arrow when the turn has nothing to summarize or copy', async ($, on) => {
     stubEngine(on)
 
-    // A note then the answer, no tool calls: the note folds, but no item has a value.
+    // The answer alone: no item has a value, and there is no work to copy.
     await $.turn.start({ text: 'think', turnId: 't9' })
-    await appendText($, 't9-a', 'Thinking it over (t9).')
     await appendText($, 't9-b', 'Here it is (t9).')
     await $.turn.complete({
       answer: 'Here it is (t9).',

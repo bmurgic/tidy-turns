@@ -29,13 +29,15 @@ const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, bold: true, inverse:
 // One row of a turn's summary; the problems row draws in red.
 type SummaryRow = { name: string; text: string }
 
-type AnswerLine = { lead: string; rows: SummaryRow[]; isOpen: boolean; onToggle: () => void }
+// hasWork: the turn has a copy of its work to draw under the line once opened.
+type AnswerLine = { lead: string; rows: SummaryRow[]; hasWork: boolean; isOpen: boolean; onToggle: () => void }
 
 // The Worked for line over a finished turn's answer, and under it the summary as a
-// tree a click opens and closes. A turn with no summary has nothing to open, so no
-// arrow and no click. Each row sits in a keyed Box, its own hover scope.
-export const drawAnswerLine = (ui: Ui, { lead, rows, isOpen, onToggle }: AnswerLine) => {
-  const line = rows.length > 0 ? drawOpenableLine(ui, { lead, isOpen, onToggle }) : <ui.Text dimColor>✻ {lead}</ui.Text>
+// tree a click opens and closes. A turn with no summary and no work to copy has
+// nothing to open, so no arrow and no click. Each row sits in a keyed Box, its own hover scope.
+export const drawAnswerLine = (ui: Ui, { lead, rows, hasWork, isOpen, onToggle }: AnswerLine) => {
+  const isOpenable = rows.length > 0 || hasWork
+  const line = isOpenable ? drawOpenableLine(ui, { lead, isOpen, onToggle }) : <ui.Text dimColor>✻ {lead}</ui.Text>
 
   return (
     <ui.Box flexDirection="column" alignSelf="flex-start">
@@ -48,7 +50,7 @@ export const drawAnswerLine = (ui: Ui, { lead, rows, isOpen, onToggle }: AnswerL
 // Closed, the line is dim. Open, it is bright and its star and tree are
 // orange: a Button takes no color, so the star is a Text of its own. One
 // keyed Box holds the line, so it lights as one under the pointer.
-const drawOpenableLine = (ui: Ui, { lead, isOpen, onToggle }: Omit<AnswerLine, 'rows'>) => (
+const drawOpenableLine = (ui: Ui, { lead, isOpen, onToggle }: Omit<AnswerLine, 'rows' | 'hasWork'>) => (
   <ui.Box key="tidy-turns:line">
     <ui.Text color={isOpen ? CLAUDE_ORANGE : undefined} dimColor={!isOpen} hover={LINE_HOVER}>
       ✻{' '}
@@ -189,6 +191,9 @@ const turnSteps = (turn: Turn): Step[] => {
 
   return [...steps, ...turn.agentAnswers.map((text, index): Step => ({ kind: 'agent-answer', index, text }))]
 }
+
+// Whether the turn has a note, a run, a failed call, or a subagent answer to copy.
+export const hasTurnWork = (turn: Turn) => turnSteps(turn).length > 0
 
 type TurnCopy = { turn: Turn; openRunIds: string[]; onToggleRun: (runId: string) => void; columns: number }
 

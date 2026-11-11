@@ -5,7 +5,7 @@ import type { Turn } from '../types'
 import { describeVerb, readSettings, type Settings, summaryGroups } from './summary'
 import { answeredTurnId, agentOwnerId, findCall, isFoldedText, isFoldedTool, runCalls, subagentRowTurnId } from './turn-queries'
 import { addOnce, addReplyBlocks, EMPTY_TURN, endedCallChange, replyBlocks, withCallState } from './turn-record'
-import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy } from './turn-view'
+import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy, hasTurnWork } from './turn-view'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
 const runningTurnId = atom({ plugin: 'tidy-turns', key: 'runningTurnId' } as const, null)
@@ -401,6 +401,7 @@ const drawAnswer = async ($: EngineInterface, e: RowEvent<typeof ASSISTANT_MESSA
   const summary = drawAnswerLine(ui, {
     lead: describeVerb(turn),
     rows: summaryGroups(turn, settings),
+    hasWork: isFoldingOn && hasTurnWork(turn),
     isOpen,
     onToggle: () => toggleSummary($, turnId),
   })

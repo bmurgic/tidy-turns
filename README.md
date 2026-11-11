@@ -89,7 +89,7 @@ claude plugin install tidy-turns@tidy-turns
 - **Open a turn.** Click the line. The summary and the turn's work open under that turn only, and the arrow turns to `▾`. Click the line or any summary row to close it. Each turn remembers its own state.
 - **Show the folded work.** Run `/tidy-turns` to turn folding off for the session, and run it again to turn folding back on. Press ctrl+o to see every row in the transcript view without changing anything.
 
-A turn with nothing to summarize shows `✻ Verb for 7s` with no arrow, and clicking it does nothing.
+A turn with nothing to summarize and no work to show, such as a bare answer with no notes or tool calls, shows `✻ Verb for 7s` with no arrow, and clicking it does nothing. With every summary item off, a turn with work still opens, to its work alone.
 
 ## Change the settings
 

@@ -99,6 +99,37 @@ describe("an open turn's work", () => {
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▸')
   })
 
+  test(
+    'opens the work with every summary item off, drawing the copy and no tree',
+    {
+      options: {
+        showToolCount: false,
+        showToolKinds: false,
+        showSubagents: false,
+        showFilesChanged: false,
+        showFailures: false,
+        showEndReason: false,
+        showSessionTools: false,
+        showTokens: false,
+        showModel: false,
+        showSkills: false,
+        showToolSearches: false,
+        showMcpCalls: false,
+      },
+    },
+    async ($, on) => {
+      await runWorkTurn($, on)
+      const answer = await mountAnswer($, 'All done (w).')
+
+      expect(await textOf(answer, 'tidy-turns:work')).toBe(' ▸')
+
+      await answer.press({ key: 'tidy-turns:lead' })
+
+      expect(await textOf(answer, 'tidy-turns:note:0')).toBe('⏺ First note.')
+      expect(JSON.stringify(await answer.drawn())).not.toContain('tidy-turns:row:')
+    },
+  )
+
   test('leaves the copy out while folding is off, since the rows above already show the work', async ($, on) => {
     await runWorkTurn($, on)
     await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
