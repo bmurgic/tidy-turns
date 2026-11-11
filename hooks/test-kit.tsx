@@ -24,6 +24,58 @@ export const textRow = (text: string, isFirstOfReply = false) => ({
 // The kit has no transcript store beneath session.append; the mod records before next.
 export const storeMissing = (error: Error) => expect(error.message).toContain('no implementation for session.append')
 
+// The kit types only this build's built-in tools and the message shapes it knows.
+export type ToolCallArgs = Parameters<Engine['tool']['call']>[0]
+
+export type AppendedMessage = Parameters<Engine['session']['append']>[0]['message']
+
+// One assistant message of the running turn, its content blocks as the model wrote them.
+export const appendModelReply = ($: Engine, uuid: string, content: unknown[]) =>
+  $.session
+    .append({
+      message: { type: 'assistant', role: 'assistant', content } as unknown as AppendedMessage,
+      door: 'response',
+      origin: { kind: 'model', model: 'claude-opus-5-5' },
+      uuid,
+    })
+    .catch(storeMissing)
+
+// A call of a tool the kit has no type for, such as an MCP tool or Agent.
+export const callUntypedTool = ($: Engine, tool: string, toolUseId: string) =>
+  $.tool.call({ tool, tool_use_id: toolUseId } as unknown as ToolCallArgs)
+
+// The kit types no agentId on turn events; a subagent's run carries one.
+export const startSubagent = ($: Engine, turnId: string, agentId: string) => {
+  const start = { text: 'explore', turnId, agentId }
+
+  return $.turn.start(start as Omit<typeof start, 'agentId'>)
+}
+
+export const completeSubagent = ($: Engine, turnId: string, agentId: string, answer: string) => {
+  const end = { answer, durationMs: 900, isAborted: false, turnId, reason: 'answer', agentId } as const
+
+  return $.turn.complete(end as Omit<typeof end, 'agentId'>)
+}
+
+// The person's prompt row; its isExpanded tells whether the ctrl+o transcript shows.
+export const mountPrompt = ($: Engine, text: string, isExpanded: boolean) =>
+  $.ui.mount({
+    plugin: 'tidy-turns',
+    surface: 'terminal',
+    component: 'UserMessage',
+    props: { text, origin: { kind: 'composer' as const }, isExpanded },
+  })
+
+// True when each mark appears in the drawn tree, after the one before it.
+export const isDrawnInOrder = (drawn: string, marks: string[]) => {
+  const order = marks.map(mark => drawn.indexOf(mark))
+
+  return order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))
+}
+
+export const summaryRowText = async (answer: Awaited<ReturnType<typeof mountAnswer>>, group: string) =>
+  (await answer.find({ key: `tidy-turns:row:${group}` }))?.text
+
 // Stand-ins for the engine beneath the plugin.
 // Calls a test keeps running until it settles the promise, by tool_use_id.
 export const heldCalls = new Map<string, Promise<void>>()
@@ -45,19 +97,7 @@ export const stubEngine = (on: On) => {
   })
 }
 
-export const appendText = ($: Engine, uuid: string, text: string) =>
-  $.session
-    .append({
-      message: {
-        type: 'assistant',
-        role: 'assistant',
-        content: [{ type: 'text', text }],
-      },
-      door: 'response',
-      origin: { kind: 'model', model: 'claude-opus-5-5' },
-      uuid,
-    })
-    .catch(storeMissing)
+export const appendText = ($: Engine, uuid: string, text: string) => appendModelReply($, uuid, [{ type: 'text', text }])
 
 // One turn up to its answer: a working note, a Bash call, then the final answer.
 export const runTurn = async ($: Engine, turnId: string) => {
@@ -177,45 +217,34 @@ export const ALL_ITEMS = {
   showModel: true,
 }
 
-export const mountAnswer = ($: Engine, text: string) =>
+export const mountAnswer = ($: Engine, text: string, surface: Surface = 'terminal') =>
   $.ui.mount({
     plugin: 'tidy-turns',
-    surface: 'terminal',
+    surface,
     component: 'AssistantMessage',
     props: textRow(text),
   })
 
-export const drawTool = async ($: Engine, id: string, surface: Surface) =>
-  (
-    await $.ui.mount({
-      plugin: 'tidy-turns',
-      surface,
-      component: 'ToolUse',
-      props: toolRow(id),
-    })
-  ).drawn()
+export const mountTool = ($: Engine, id: string, surface: Surface = 'terminal') =>
+  $.ui.mount({
+    plugin: 'tidy-turns',
+    surface,
+    component: 'ToolUse',
+    props: toolRow(id),
+  })
 
-export const drawText = async ($: Engine, text: string, surface: Surface) =>
-  (
-    await $.ui.mount({
-      plugin: 'tidy-turns',
-      surface,
-      component: 'AssistantMessage',
-      props: textRow(text),
-    })
-  ).drawn()
+export const drawTool = async ($: Engine, id: string, surface: Surface) => (await mountTool($, id, surface)).drawn()
+
+export const drawText = async ($: Engine, text: string, surface: Surface) => (await mountAnswer($, text, surface)).drawn()
 
 // A turn that writes a note, runs an Explore subagent through an Agent call, then
 // answers. The subagent's run raises its own turn.start and turn.complete.
 export const runSubagentTurn = async ($: Engine, turnId: string) => {
   await $.turn.start({ text: 'list files', turnId })
   await appendText($, `${turnId}-a`, `Let me look (${turnId}).`)
-  // The kit types no agentId on turn events; a subagent's run carries one.
-  const start = { text: 'explore', turnId: `${turnId}-sub`, agentId: `${turnId}-agent` }
-  await $.turn.start(start as Omit<typeof start, 'agentId'>)
-  const end = { answer: ` Found it (${turnId}).\n`, durationMs: 900, isAborted: false, turnId: `${turnId}-sub`, reason: 'answer', agentId: `${turnId}-agent` } as const
-  await $.turn.complete(end as Omit<typeof end, 'agentId'>)
-  await $.tool.call({ tool: 'Agent', tool_use_id: `${turnId}-agent-call` } as unknown as Parameters<Engine['tool']['call']>[0])
+  await startSubagent($, `${turnId}-sub`, `${turnId}-agent`)
+  await completeSubagent($, `${turnId}-sub`, `${turnId}-agent`, ` Found it (${turnId}).\n`)
+  await callUntypedTool($, 'Agent', `${turnId}-agent-call`)
   await appendText($, `${turnId}-b`, `Found one file (${turnId}).`)
   await finishTurn($, turnId)
 }
@@ -233,9 +262,8 @@ export const isHidden = (tree: RenderElement) => tree.type === 'Box' && tree.pro
 
 // A turn of skill, tool search, MCP and session tool calls, and one read.
 export const runToolingTurn = async ($: Engine, turnId: string) => {
-  // The kit types only this build's built-in tools; an MCP tool's name is the server's.
-  const call = (tool: string, id: string) =>
-    $.tool.call({ tool, tool_use_id: `${turnId}-${id}` } as unknown as Parameters<Engine['tool']['call']>[0])
+  // An MCP tool's name is the server's.
+  const call = (tool: string, id: string) => callUntypedTool($, tool, `${turnId}-${id}`)
 
   await $.turn.start({ text: 'tidy up', turnId })
   await appendText($, `${turnId}-a`, `Looking (${turnId}).`)

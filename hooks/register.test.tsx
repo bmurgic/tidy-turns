@@ -2,7 +2,37 @@ import type { On, TurnStepChunk } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { ALL_ITEMS, SURFACES, type Surface, TOOLING_ITEMS, appendText, drawText, drawTool, finishTurn, heldCalls, isHidden, mountAnswer, runRichTurn, runSubagentTurn, runToolingTurn, runTurn, storeMissing, stubEngine, subagentMessage, subagentNotice, textRow, toolRow } from './test-kit'
+import {
+  ALL_ITEMS,
+  SURFACES,
+  TOOLING_ITEMS,
+  type AppendedMessage,
+  appendModelReply,
+  appendText,
+  callUntypedTool,
+  completeSubagent,
+  drawText,
+  drawTool,
+  finishTurn,
+  heldCalls,
+  isDrawnInOrder,
+  isHidden,
+  mountAnswer,
+  mountPrompt,
+  mountTool,
+  runRichTurn,
+  runSubagentTurn,
+  runToolingTurn,
+  runTurn,
+  startSubagent,
+  storeMissing,
+  stubEngine,
+  subagentMessage,
+  subagentNotice,
+  summaryRowText,
+  type ToolCallArgs,
+  toolRow,
+} from './test-kit'
 
 describe('tidy-turns', () => {
   for (const surface of SURFACES) {
@@ -25,12 +55,7 @@ describe('tidy-turns', () => {
     test(`redraws a row mounted before the turn finished on ${surface}`, async ($, on) => {
       stubEngine(on)
       await runTurn($, 't2')
-      const tool = await $.ui.mount({
-        plugin: 'tidy-turns',
-        surface,
-        component: 'ToolUse',
-        props: toolRow('t2-tool'),
-      })
+      const tool = await mountTool($, 't2-tool', surface)
       expect(isHidden(await tool.drawn())).toBe(false)
 
       await finishTurn($, 't2')
@@ -43,12 +68,7 @@ describe('tidy-turns', () => {
       await runTurn($, 't5')
       await finishTurn($, 't5')
 
-      const answer = await $.ui.mount({
-        plugin: 'tidy-turns',
-        surface,
-        component: 'AssistantMessage',
-        props: textRow('Found one file (t5).'),
-      })
+      const answer = await mountAnswer($, 'Found one file (t5).', surface)
       const lead = await answer.find({ type: 'Button', text: /^[A-Z][a-zé]+ for 4s$/ })
       const line = await answer.find({ key: 'tidy-turns:line' })
       const details = await answer.find({ type: 'Button', text: ' ▸' })
@@ -113,13 +133,11 @@ describe('tidy-turns', () => {
   test("folds a subagent's message with the turn that ran it when it arrives after that turn", async ($, on) => {
     stubEngine(on)
     await $.turn.start({ text: 'look', turnId: 'early' })
-    const start = { text: 'explore', turnId: 'early-sub', agentId: 'early-agent' }
-    await $.turn.start(start as Omit<typeof start, 'agentId'>)
-    await $.tool.call({ tool: 'Agent', tool_use_id: 'early-agent-call' } as unknown as Parameters<Engine['tool']['call']>[0])
+    await startSubagent($, 'early-sub', 'early-agent')
+    await callUntypedTool($, 'Agent', 'early-agent-call')
     await appendText($, 'early-a', 'Still looking (early).')
     await finishTurn($, 'early')
-    const end = { answer: 'Found it late.', durationMs: 900, isAborted: false, turnId: 'early-sub', reason: 'answer', agentId: 'early-agent' } as const
-    await $.turn.complete(end as Omit<typeof end, 'agentId'>)
+    await completeSubagent($, 'early-sub', 'early-agent', 'Found it late.')
     await $.turn.start({ text: 'Found it late.', turnId: 'late' })
     const message = await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: subagentMessage('Found it late.') })
 
@@ -130,32 +148,12 @@ describe('tidy-turns', () => {
     stubEngine(on)
     await runTurn($, 't7')
     await finishTurn($, 't7')
-    const prompt = (isExpanded: boolean) => ({
-      text: 'list files',
-      origin: { kind: 'composer' as const },
-      isExpanded,
-    })
 
-    await $.ui.mount({
-      plugin: 'tidy-turns',
-      surface: 'terminal',
-      component: 'UserMessage',
-      props: prompt(true),
-    })
-    const tool = await $.ui.mount({
-      plugin: 'tidy-turns',
-      surface: 'terminal',
-      component: 'ToolUse',
-      props: toolRow('t7-tool'),
-    })
+    await mountPrompt($, 'list files', true)
+    const tool = await mountTool($, 't7-tool')
     expect(isHidden(await tool.drawn())).toBe(false)
 
-    await $.ui.mount({
-      plugin: 'tidy-turns',
-      surface: 'terminal',
-      component: 'UserMessage',
-      props: prompt(false),
-    })
+    await mountPrompt($, 'list files', false)
     expect(isHidden(await tool.drawn())).toBe(true)
   })
 
@@ -163,7 +161,7 @@ describe('tidy-turns', () => {
     stubEngine(on)
     await runRichTurn($, on, 's1')
     const answer = await mountAnswer($, 'Stopped (s1).')
-    const row = async (group: string) => (await answer.find({ key: `tidy-turns:row:${group}` }))?.text
+    const row = (group: string) => summaryRowText(answer, group)
 
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▸')
     expect(await row('activity')).toBeUndefined()
@@ -177,8 +175,8 @@ describe('tidy-turns', () => {
     expect(await row('problems')).toBe('└─ 1 failed · interrupted')
 
     const drawn = JSON.stringify(await answer.drawn())
-    const order = ['activity', 'changes', 'usage', 'problems'].map(group => drawn.indexOf(`tidy-turns:row:${group}`))
-    expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))).toBe(true)
+    const marks = ['activity', 'changes', 'usage', 'problems'].map(group => `tidy-turns:row:${group}`)
+    expect(isDrawnInOrder(drawn, marks)).toBe(true)
   })
 
   test(
@@ -205,7 +203,7 @@ describe('tidy-turns', () => {
       await runToolingTurn($, 'k1')
       const answer = await mountAnswer($, 'Tidied (k1).')
       await answer.press({ key: 'tidy-turns:work' })
-      const row = async (group: string) => (await answer.find({ key: `tidy-turns:row:${group}` }))?.text
+      const row = (group: string) => summaryRowText(answer, group)
 
       expect(await row('activity')).toBe('├─ 8 tool calls · 1 read')
       expect(await row('session')).toBe('├─ 2 messages · 1 monitor')
@@ -252,7 +250,7 @@ describe('tidy-turns', () => {
     await runRichTurn($, on, 's3')
     const answer = await mountAnswer($, 'Stopped (s3).')
     await answer.press({ key: 'tidy-turns:work' })
-    const row = async (group: string) => (await answer.find({ key: `tidy-turns:row:${group}` }))?.text
+    const row = (group: string) => summaryRowText(answer, group)
 
     expect(await row('activity')).toBe('├─ 6 tool calls · 2 reads · 1 command · 1 agent')
     expect(await row('changes')).toBe('├─ 2 files changed')
@@ -363,10 +361,7 @@ describe('tidy-turns', () => {
   describe('a running turn', () => {
     type Block = 'note' | { callId: string; tool?: string; input?: Record<string, unknown> }
 
-    const mountCall = ($: Engine, id: string, surface: Surface = 'terminal') =>
-      $.ui.mount({ plugin: 'tidy-turns', surface, component: 'ToolUse', props: toolRow(id) })
-
-    const linesOf = async (row: Awaited<ReturnType<typeof mountCall>>) =>
+    const linesOf = async (row: Awaited<ReturnType<typeof mountTool>>) =>
       (await row.findAll({ type: 'Button' })).map(button => button.text)
 
     const mountResult = ($: Engine, isErrored = false) =>
@@ -396,25 +391,17 @@ describe('tidy-turns', () => {
 
     // One assistant message of the running turn, its blocks in the order the model wrote them.
     const appendReply = ($: Engine, uuid: string, blocks: Block[]) =>
-      $.session
-        .append({
-          message: {
-            type: 'assistant',
-            role: 'assistant',
-            content: blocks.map(block =>
-              block === 'note'
-                ? { type: 'text', text: 'Checking the files.' }
-                : { type: 'tool_use', id: block.callId, name: block.tool ?? 'Bash', input: block.input ?? { command: 'ls' } },
-            ),
-          } as unknown as Parameters<Engine['session']['append']>[0]['message'],
-          door: 'response',
-          origin: { kind: 'model', model: 'claude-opus-5-5' },
-          uuid,
-        })
-        .catch(storeMissing)
+      appendModelReply(
+        $,
+        uuid,
+        blocks.map(block =>
+          block === 'note'
+            ? { type: 'text', text: 'Checking the files.' }
+            : { type: 'tool_use', id: block.callId, name: block.tool ?? 'Bash', input: block.input ?? { command: 'ls' } },
+        ),
+      )
 
-    const callTool = ($: Engine, id: string, tool = 'Bash') =>
-      $.tool.call({ tool, tool_use_id: id, command: 'ls' } as Parameters<Engine['tool']['call']>[0])
+    const callTool = ($: Engine, id: string, tool = 'Bash') => $.tool.call({ tool, tool_use_id: id, command: 'ls' } as ToolCallArgs)
 
     // Keeps the call running until the returned function is called.
     const holdCall = ($: Engine, id: string) => {
@@ -434,13 +421,13 @@ describe('tidy-turns', () => {
       await appendReply($, 'live-a', blocks)
     }
 
-    const finishTurn = ($: Engine) =>
+    const finishLiveTurn = ($: Engine) =>
       $.turn.complete({ answer: 'Done.', durationMs: 4200, isAborted: false, turnId: 'live', reason: 'answer' })
 
     test('draws a call after a note as one line under it, with the tool and its target', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
       await callTool($, 'a')
-      const row = await mountCall($, 'a')
+      const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual(['  ⎿ Bash ls'])
       expect(await row.find({ type: 'Text', text: 'engine row' })).toBeUndefined()
@@ -450,7 +437,7 @@ describe('tidy-turns', () => {
       await startTurn($, on, [{ callId: 'a' }])
       await callTool($, 'a')
 
-      expect(await linesOf(await mountCall($, 'a'))).toEqual(['⏺ Bash ls'])
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['⏺ Bash ls'])
     })
 
     test('names the tool and what it works on, one run per note', async ($, on) => {
@@ -459,10 +446,10 @@ describe('tidy-turns', () => {
       await appendReply($, 'live-c', ['note', { callId: 'c', input: { command: 'cd /w\nls', description: 'go' } }])
       await appendReply($, 'live-d', ['note', { callId: 'd', tool: 'Skill', input: {} }])
 
-      expect(await linesOf(await mountCall($, 'a'))).toEqual(['  ⎿ Edit ~/w/a.ts'])
-      expect(await linesOf(await mountCall($, 'b'))).toEqual(['  ⎿ Grep todo'])
-      expect(await linesOf(await mountCall($, 'c'))).toEqual(['  ⎿ Bash cd /w'])
-      expect(await linesOf(await mountCall($, 'd'))).toEqual(['  ⎿ Skill'])
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Edit ~/w/a.ts'])
+      expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Grep todo'])
+      expect(await linesOf(await mountTool($, 'c'))).toEqual(['  ⎿ Bash cd /w'])
+      expect(await linesOf(await mountTool($, 'd'))).toEqual(['  ⎿ Skill'])
     })
     test('keeps a run of calls in one row that shows the latest, and hides the others', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }, { callId: 'b' }, { callId: 'c' }])
@@ -470,9 +457,9 @@ describe('tidy-turns', () => {
       await callTool($, 'b')
       await callTool($, 'c')
 
-      expect(await linesOf(await mountCall($, 'a'))).toEqual(['  ⎿ Bash ls ▸ 3 calls'])
-      expect(isHidden(await (await mountCall($, 'b')).drawn())).toBe(true)
-      expect(isHidden(await (await mountCall($, 'c')).drawn())).toBe(true)
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls ▸ 3 calls'])
+      expect(isHidden(await (await mountTool($, 'b')).drawn())).toBe(true)
+      expect(isHidden(await (await mountTool($, 'c')).drawn())).toBe(true)
     })
 
     test('replaces the line with the call that is running now', async ($, on) => {
@@ -483,7 +470,7 @@ describe('tidy-turns', () => {
       ])
       await callTool($, 'a')
       const release = holdCall($, 'b')
-      const row = await mountCall($, 'a')
+      const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual(['  ⎿ Bash second ▸ 2 calls'])
 
@@ -498,7 +485,7 @@ describe('tidy-turns', () => {
       ])
       const releaseA = holdCall($, 'a')
       const releaseB = holdCall($, 'b')
-      const row = await mountCall($, 'a')
+      const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual(['  ⎿ Bash first ▸ 2 calls', '    Bash second'])
 
@@ -514,7 +501,7 @@ describe('tidy-turns', () => {
       ])
       await callTool($, 'a')
       await callTool($, 'b')
-      const row = await mountCall($, 'a')
+      const row = await mountTool($, 'a')
 
       await row.press({ key: 'tidy-turns:call:b' })
       expect(await linesOf(row)).toEqual(['  ⎿ Bash first ▾', '    Bash second'])
@@ -529,17 +516,15 @@ describe('tidy-turns', () => {
       await callTool($, 'a')
       await callTool($, 'b')
 
-      expect(await linesOf(await mountCall($, 'a'))).toEqual(['  ⎿ Bash ls'])
-      expect(await linesOf(await mountCall($, 'b'))).toEqual(['  ⎿ Bash ls'])
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls'])
+      expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Bash ls'])
     })
 
     test('starts a new row after a message sent while the turn runs', async ($, on) => {
       await startTurn($, on, [{ callId: 'a' }])
       await $.session
         .append({
-          message: { type: 'attachment', name: 'queued_command', role: 'user', content: [{ type: 'text', text: 'also check the tests' }] } as unknown as Parameters<
-            Engine['session']['append']
-          >[0]['message'],
+          message: { type: 'attachment', name: 'queued_command', role: 'user', content: [{ type: 'text', text: 'also check the tests' }] } as unknown as AppendedMessage,
           door: 'attachment',
           origin: { kind: 'engine' },
           uuid: 'live-user',
@@ -550,34 +535,23 @@ describe('tidy-turns', () => {
       await callTool($, 'b')
       await callTool($, 'c')
 
-      expect(await linesOf(await mountCall($, 'a'))).toEqual(['⏺ Bash ls'])
-      expect(await linesOf(await mountCall($, 'b'))).toEqual(['⏺ Bash ls ▸ 2 calls'])
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['⏺ Bash ls'])
+      expect(await linesOf(await mountTool($, 'b'))).toEqual(['⏺ Bash ls ▸ 2 calls'])
     })
 
     test('counts an advisor call, which the API runs itself, in the row of the calls around it', async ($, on) => {
       stubEngine(on)
       await $.turn.start({ text: 'list files', turnId: 'live' })
-      await $.session
-        .append({
-          message: {
-            type: 'assistant',
-            role: 'assistant',
-            content: [
-              { type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'ls' } },
-              { type: 'server_tool_use', id: 'adv', name: 'advisor', input: {} },
-              { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'ls' } },
-            ],
-          } as unknown as Parameters<Engine['session']['append']>[0]['message'],
-          door: 'response',
-          origin: { kind: 'model', model: 'claude-opus-5-5' },
-          uuid: 'live-a',
-        })
-        .catch(storeMissing)
+      await appendModelReply($, 'live-a', [
+        { type: 'tool_use', id: 'a', name: 'Bash', input: { command: 'ls' } },
+        { type: 'server_tool_use', id: 'adv', name: 'advisor', input: {} },
+        { type: 'tool_use', id: 'b', name: 'Bash', input: { command: 'ls' } },
+      ])
       await callTool($, 'a')
       await callTool($, 'b')
 
-      expect(await linesOf(await mountCall($, 'a'))).toEqual(['⏺ Bash ls ▸ 3 calls'])
-      expect(isHidden(await (await mountCall($, 'adv')).drawn())).toBe(true)
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['⏺ Bash ls ▸ 3 calls'])
+      expect(isHidden(await (await mountTool($, 'adv')).drawn())).toBe(true)
     })
 
     test('draws a failed call as a red line of its own and leaves it out of the row', async ($, on) => {
@@ -586,12 +560,12 @@ describe('tidy-turns', () => {
       await callTool($, 'b')
       await callTool($, 'c')
 
-      const failed = await mountCall($, 'fail')
+      const failed = await mountTool($, 'fail')
       expect(await linesOf(failed)).toEqual([])
       expect((await failed.find({ type: 'Text', text: '  ⎿ Bash ls · failed' }))?.props.color).toBe('error')
       expect(await failed.find({ type: 'Text', text: 'engine row' })).toBeUndefined()
-      expect(await linesOf(await mountCall($, 'b'))).toEqual(['  ⎿ Bash ls ▸ 2 calls'])
-      expect(isHidden(await (await mountCall($, 'c')).drawn())).toBe(true)
+      expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Bash ls ▸ 2 calls'])
+      expect(isHidden(await (await mountTool($, 'c')).drawn())).toBe(true)
     })
     test('draws a call the engine marks errored or interrupted as a red line', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
@@ -611,10 +585,10 @@ describe('tidy-turns', () => {
       await startTurn($, on, ['note', { callId: 'a' }, { callId: 'b' }])
       await callTool($, 'a')
       await callTool($, 'b')
-      const row = await mountCall($, 'a')
+      const row = await mountTool($, 'a')
       expect(await linesOf(row)).toHaveLength(1)
 
-      await finishTurn($)
+      await finishLiveTurn($)
 
       expect(isHidden(await row.drawn())).toBe(true)
     })
@@ -635,7 +609,7 @@ describe('tidy-turns', () => {
     test('leaves a group of a finished turn folded and a group it cannot place alone', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
       await callTool($, 'a')
-      await finishTurn($)
+      await finishLiveTurn($)
 
       expect(isHidden(await (await mountGroup($, ['a'], false)).drawn())).toBe(true)
       expect(await (await mountGroup($, [undefined])).find({ type: 'Text', text: 'engine group expanded=false' })).toBeDefined()
@@ -644,7 +618,7 @@ describe('tidy-turns', () => {
     test('leaves the desktop to the engine rows', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
       await callTool($, 'a')
-      const row = await mountCall($, 'a', 'desktop')
+      const row = await mountTool($, 'a', 'desktop')
 
       expect(await linesOf(row)).toEqual([])
       expect(await row.find({ type: 'Text', text: 'engine row' })).toBeDefined()
@@ -653,13 +627,8 @@ describe('tidy-turns', () => {
     test('draws the engine rows while the ctrl+o transcript is open', async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
       await callTool($, 'a')
-      await $.ui.mount({
-        plugin: 'tidy-turns',
-        surface: 'terminal',
-        component: 'UserMessage',
-        props: { text: 'list files', origin: { kind: 'composer' as const }, isExpanded: true },
-      })
-      const row = await mountCall($, 'a')
+      await mountPrompt($, 'list files', true)
+      const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual([])
       expect(await row.find({ type: 'Text', text: 'engine row' })).toBeDefined()
@@ -668,7 +637,7 @@ describe('tidy-turns', () => {
     test('draws the engine rows when the setting is off', { options: { compactLiveCalls: false } }, async ($, on) => {
       await startTurn($, on, ['note', { callId: 'a' }])
       await callTool($, 'a')
-      const row = await mountCall($, 'a')
+      const row = await mountTool($, 'a')
 
       expect(await linesOf(row)).toEqual([])
       expect(await row.find({ type: 'Text', text: 'engine row' })).toBeDefined()

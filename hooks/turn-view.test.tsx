@@ -2,28 +2,19 @@ import type { On } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { appendText, mountAnswer, storeMissing, stubEngine } from './test-kit'
+import { appendModelReply, appendText, completeSubagent, isDrawnInOrder, mountAnswer, mountPrompt, startSubagent, stubEngine } from './test-kit'
 
 describe("an open turn's work", () => {
   type Block = { text: string } | { callId: string; command: string }
 
   const appendBlocks = ($: Engine, uuid: string, blocks: Block[]) =>
-    $.session
-      .append({
-        message: {
-          type: 'assistant',
-          role: 'assistant',
-          content: blocks.map(block =>
-            'text' in block
-              ? { type: 'text', text: block.text }
-              : { type: 'tool_use', id: block.callId, name: 'Bash', input: { command: block.command } },
-          ),
-        } as unknown as Parameters<Engine['session']['append']>[0]['message'],
-        door: 'response',
-        origin: { kind: 'model', model: 'claude-opus-5-5' },
-        uuid,
-      })
-      .catch(storeMissing)
+    appendModelReply(
+      $,
+      uuid,
+      blocks.map(block =>
+        'text' in block ? { type: 'text', text: block.text } : { type: 'tool_use', id: block.callId, name: 'Bash', input: { command: block.command } },
+      ),
+    )
 
   // A note over two calls, a second note over a failed call and one more, an
   // Explore subagent, then the answer. The call with "fail" in its id fails.
@@ -36,10 +27,8 @@ describe("an open turn's work", () => {
     await appendBlocks($, 'w-2', [{ text: 'Second note.' }, { callId: 'w-fail', command: 'false' }, { callId: 'w-c', command: 'third' }])
     await $.tool.call({ tool: 'Bash', tool_use_id: 'w-fail', command: 'false' })
     await $.tool.call({ tool: 'Bash', tool_use_id: 'w-c', command: 'third' })
-    const start = { text: 'explore', turnId: 'w-sub', agentId: 'w-agent' }
-    await $.turn.start(start as Omit<typeof start, 'agentId'>)
-    const end = { answer: 'Found it (w).\nMore detail.', durationMs: 900, isAborted: false, turnId: 'w-sub', reason: 'answer', agentId: 'w-agent' } as const
-    await $.turn.complete(end as Omit<typeof end, 'agentId'>)
+    await startSubagent($, 'w-sub', 'w-agent')
+    await completeSubagent($, 'w-sub', 'w-agent', 'Found it (w).\nMore detail.')
     await appendText($, 'w-3', 'All done (w).')
     await $.turn.complete({ answer: 'All done (w).', durationMs: 4200, isAborted: false, turnId: 'w', reason: 'answer' })
   }
@@ -65,7 +54,7 @@ describe("an open turn's work", () => {
     expect(await answer.find({ key: 'tidy-turns:note:2' })).toBeUndefined()
 
     const drawn = JSON.stringify(await answer.drawn())
-    const order = [
+    const marks = [
       'tidy-turns:row:activity',
       'tidy-turns:note:0',
       'tidy-turns:call:w-b',
@@ -74,8 +63,8 @@ describe("an open turn's work", () => {
       'tidy-turns:call:w-c',
       'tidy-turns:agent-answer:0',
       'engine row',
-    ].map(mark => drawn.indexOf(mark))
-    expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))).toBe(true)
+    ]
+    expect(isDrawnInOrder(drawn, marks)).toBe(true)
   })
 
   test('opens a run of the copy to every call on a click, and closes it on a second', async ($, on) => {
@@ -122,15 +111,14 @@ describe("an open turn's work", () => {
   test('draws the engine answer row alone while the ctrl+o transcript is open', async ($, on) => {
     await runWorkTurn($, on)
     await openAnswer($)
-    const prompt = (isExpanded: boolean) => ({ text: 'look around', origin: { kind: 'composer' as const }, isExpanded })
-    await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: prompt(true) })
+    await mountPrompt($, 'look around', true)
     const answer = await mountAnswer($, 'All done (w).')
 
     expect(await answer.find({ key: 'tidy-turns:note:0' })).toBeUndefined()
     expect(await answer.find({ key: 'tidy-turns:line' })).toBeUndefined()
     expect(await answer.find({ type: 'Text', text: 'engine row' })).toBeDefined()
 
-    await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: prompt(false) })
+    await mountPrompt($, 'look around', false)
   })
 })
 
