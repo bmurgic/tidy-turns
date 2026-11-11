@@ -13,13 +13,71 @@ export const DEFAULT_COLUMNS = 80
 const MIN_LINE_LENGTH = 12
 
 // The theme key Claude Code draws errors in.
-export const ERROR_RED = 'error'
+const ERROR_RED = 'error'
 
 // The details' hover: the text at full strength, never a block behind it.
-export const DETAILS_HOVER = { dimColor: false, inverse: false }
+const DETAILS_HOVER = { dimColor: false, inverse: false }
 
 // The theme key of the orange Claude Code marks its spinner with.
-export const CLAUDE_ORANGE = 'claude'
+const CLAUDE_ORANGE = 'claude'
+
+// The Worked for line's hover: the whole line bold in Claude's orange, never a
+// block behind it.
+const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, bold: true, inverse: false }
+
+// One row of a turn's summary; the problems row draws in red.
+type SummaryRow = { name: string; text: string }
+
+type AnswerLine = { lead: string; rows: SummaryRow[]; isOpen: boolean; onToggle: () => void }
+
+// The Worked for line over a finished turn's answer, and under it the summary as a
+// tree a click opens and closes. A turn with no summary has nothing to open, so no
+// arrow and no click. Each row sits in a keyed Box, its own hover scope.
+export const drawAnswerLine = (ui: Ui, { lead, rows, isOpen, onToggle }: AnswerLine) => {
+  const line = rows.length > 0 ? drawOpenableLine(ui, { lead, isOpen, onToggle }) : <ui.Text dimColor>✻ {lead}</ui.Text>
+
+  return (
+    <ui.Box flexDirection="column" alignSelf="flex-start">
+      {line}
+      {isOpen && rows.map((row, index) => drawSummaryRow(ui, { row, isLast: index === rows.length - 1, onToggle }))}
+    </ui.Box>
+  )
+}
+
+// Closed, the line is dim. Open, it is bright and its star and tree are
+// orange: a Button takes no color, so the star is a Text of its own. One
+// keyed Box holds the line, so it lights as one under the pointer.
+const drawOpenableLine = (ui: Ui, { lead, isOpen, onToggle }: Omit<AnswerLine, 'rows'>) => (
+  <ui.Box key="tidy-turns:line">
+    <ui.Text color={isOpen ? CLAUDE_ORANGE : undefined} dimColor={!isOpen} hover={LINE_HOVER}>
+      ✻{' '}
+    </ui.Text>
+    <ui.Button key="tidy-turns:lead" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={onToggle}>
+      {lead}
+    </ui.Button>
+    <ui.Button key="tidy-turns:work" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={onToggle}>
+      {isOpen ? ' ▾' : ' ▸'}
+    </ui.Button>
+  </ui.Box>
+)
+
+type SummaryRowLine = { row: SummaryRow; isLast: boolean; onToggle: () => void }
+
+// A click on a row closes the summary; the problems row, in red, takes no click.
+const drawSummaryRow = (ui: Ui, { row, isLast, onToggle }: SummaryRowLine) => (
+  <ui.Box key={`tidy-turns:row:${row.name}`}>
+    <ui.Text color={CLAUDE_ORANGE}>{isLast ? '└─ ' : '├─ '}</ui.Text>
+    {row.name === 'problems' ? <ui.Text color={ERROR_RED}>{row.text}</ui.Text> : drawRowText(ui, row, onToggle)}
+  </ui.Box>
+)
+
+const drawRowText = (ui: Ui, row: SummaryRow, onToggle: () => void) => (
+  <ui.Box key={`tidy-turns:row-text:${row.name}:scope`}>
+    <ui.Button key={`tidy-turns:row-text:${row.name}`} plain dimColor hover={DETAILS_HOVER} onPress={onToggle}>
+      {row.text}
+    </ui.Button>
+  </ui.Box>
+)
 
 // A line cut with a … so it and its suffix fit in one row of the terminal, never wrapping.
 const fitLine = (line: string, suffix: string, columns: number) => {

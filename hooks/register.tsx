@@ -3,7 +3,7 @@ import type { EngineInterface, Register, RenderViewport, ResolveInput, ToolCallI
 
 import type { LiveCall, Turn, Turns } from '../types'
 import { describeVerb, readSettings, summaryGroups } from './summary'
-import { CLAUDE_ORANGE, DEFAULT_COLUMNS, DETAILS_HOVER, drawFailedCall, drawRun, drawTurnCopy, ERROR_RED } from './turn-view'
+import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy } from './turn-view'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
 const runningTurnId = atom({ plugin: 'tidy-turns', key: 'runningTurnId' } as const, null)
@@ -253,10 +253,6 @@ const toggleRun = async ($: EngineInterface, runId: string) => {
   await update($, openRunIds, ids => toggleId(ids, runId))
   $.ui.invalidate('ui.render')
 }
-
-// The Worked for line's hover: the whole line bold in Claude's orange, never a
-// block behind it.
-const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, bold: true, inverse: false }
 
 // True while the ctrl+o transcript shows. No event says so; the person's prompt
 // row draws again with isExpanded set, so its hook records the view here (a
@@ -563,7 +559,6 @@ export const register: Register = (on, options) => {
 
     const isFoldingOn = await read($, isFolding)
     const ui = $.ui.resolve(e)
-    const { Box, Button, Text } = ui
 
     if (isFoldingOn && isFoldedText(all, e.props.text)) {
       return drawHidden($, e)
@@ -576,57 +571,14 @@ export const register: Register = (on, options) => {
       return next(e)
     }
 
-    // The summary sits under the line as a tree a click opens and closes; the
-    // rows above the line stay folded. A turn with no summary has nothing to open, so no arrow
-    // and no click. Each row sits in a keyed Box, its own hover scope.
+    // The rows above the line stay folded while its summary is open.
     const isOpen = (await read($, openTurnIds)).includes(turnId)
-    const toggle = () => toggleSummary($, turnId)
-    const groups = summaryGroups(turn, settings)
-    const canOpen = groups.length > 0
-
-    const clickable = (id: string, text: string) => (
-      <Box key={`${id}:scope`}>
-        <Button key={id} plain dimColor hover={DETAILS_HOVER} onPress={toggle}>
-          {text}
-        </Button>
-      </Box>
-    )
-
-    // Closed, the line is dim. Open, it is bright and its star and tree are
-    // orange: a Button takes no color, so the star is a Text of its own. One
-    // keyed Box holds the line, so it lights as one under the pointer.
-    const header = canOpen ? (
-      <Box key="tidy-turns:line">
-        <Text color={isOpen ? CLAUDE_ORANGE : undefined} dimColor={!isOpen} hover={LINE_HOVER}>
-          ✻{' '}
-        </Text>
-        <Button key="tidy-turns:lead" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={toggle}>
-          {describeVerb(turn)}
-        </Button>
-        <Button key="tidy-turns:work" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={toggle}>
-          {isOpen ? ' ▾' : ' ▸'}
-        </Button>
-      </Box>
-    ) : (
-      <Text dimColor>✻ {describeVerb(turn)}</Text>
-    )
-
-    const summary = (
-      <Box flexDirection="column" alignSelf="flex-start">
-        {header}
-        {isOpen &&
-          groups.map((group, index) => (
-            <Box key={`tidy-turns:row:${group.name}`}>
-              <Text color={CLAUDE_ORANGE}>{index === groups.length - 1 ? '└─ ' : '├─ '}</Text>
-              {group.name === 'problems' ? (
-                <Text color={ERROR_RED}>{group.text}</Text>
-              ) : (
-                clickable(`tidy-turns:row-text:${group.name}`, group.text)
-              )}
-            </Box>
-          ))}
-      </Box>
-    )
+    const summary = drawAnswerLine(ui, {
+      lead: describeVerb(turn),
+      rows: summaryGroups(turn, settings),
+      isOpen,
+      onToggle: () => toggleSummary($, turnId),
+    })
 
     // Open, the turn's work draws under the tree, the way it looked while it ran.
     // With folding off its rows still show above, so there is nothing to copy.
@@ -640,11 +592,11 @@ export const register: Register = (on, options) => {
       : null
 
     return (
-      <Box flexDirection="column" marginTop={1}>
+      <ui.Box flexDirection="column" marginTop={1}>
         {summary}
         {copy}
         {await next(e)}
-      </Box>
+      </ui.Box>
     )
   })
 
