@@ -4,7 +4,7 @@ import type { Engine } from 'claude-code/testing'
 
 export const SURFACES = ['terminal', 'desktop'] as const
 
-export type Surface = (typeof SURFACES)[number]
+type Surface = (typeof SURFACES)[number]
 
 export const toolRow = (tool_use_id: string) => ({
   tool_use_id,
@@ -16,7 +16,7 @@ export const toolRow = (tool_use_id: string) => ({
   output: { stdout: 'a', stderr: '', interrupted: false },
 })
 
-export const textRow = (text: string, isFirstOfReply = false) => ({
+const textRow = (text: string, isFirstOfReply = false) => ({
   text,
   isFirstOfReply,
 })
