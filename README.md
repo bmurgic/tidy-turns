@@ -41,7 +41,7 @@ The desktop app draws turns its own way, so the plugin folds nothing there.
 
 ## What it hooks
 
-The plugin is one hooks module, `hooks/register.tsx`, which draws with `hooks/turn-view.tsx` and builds the summary with `hooks/summary.ts`. It hooks these events:
+The plugin is one hooks module, `hooks/register.tsx`. It records each turn with `hooks/turn-record.ts`, which names what each call works on with `hooks/call-target.ts`. It asks which rows fold with `hooks/turn-queries.ts`, draws with `hooks/turn-view.tsx`, and builds the summary with `hooks/summary.ts`. It hooks these events:
 
 | Event | What the hook does |
 | --- | --- |

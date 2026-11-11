@@ -1,8 +1,10 @@
 import { atom, read, update } from 'claude-code'
-import type { EngineInterface, Hook, MatchedHook, Register, RenderViewport, ResolveInput, ToolCallInput, ToolCallResult, TurnCompleteInput, TurnStepChunk, TurnStepResult } from 'claude-code'
+import type { EngineInterface, Hook, MatchedHook, Register, RenderViewport, ResolveInput, TurnCompleteInput, TurnStepChunk, TurnStepResult } from 'claude-code'
 
-import type { LiveCall, Turn, Turns } from '../types'
+import type { Turn } from '../types'
 import { describeVerb, readSettings, type Settings, summaryGroups } from './summary'
+import { answeredTurnId, agentOwnerId, findCall, isFoldedText, isFoldedTool, runCalls, subagentRowTurnId } from './turn-queries'
+import { addOnce, addReplyBlocks, EMPTY_TURN, endedCallChange, replyBlocks, withCallState } from './turn-record'
 import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy } from './turn-view'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
@@ -10,8 +12,6 @@ const runningTurnId = atom({ plugin: 'tidy-turns', key: 'runningTurnId' } as con
 const isFolding = atom({ plugin: 'tidy-turns', key: 'isFolding' } as const, true)
 const openTurnIds = atom({ plugin: 'tidy-turns', key: 'openTurnIds' } as const, [])
 const openRunIds = atom({ plugin: 'tidy-turns', key: 'openRunIds' } as const, [])
-
-const EMPTY_TURN: Turn = { toolIds: [], toolNames: [], failedCount: 0, files: [], agentIds: [], spawnedAgentIds: [], agentAnswers: [], outputTokens: 0, calls: [], isAfterText: false, texts: [] }
 
 // Claude Code's own past-tense turn verbs, as its 2.1.286 build lists them.
 const VERBS = ['Baked', 'Brewed', 'Churned', 'Cogitated', 'Cooked', 'Crunched', 'Sautéed', 'Worked']
@@ -36,169 +36,6 @@ const addToRunningTurn = async ($: EngineInterface, change: (turn: Turn) => Turn
   await changeTurn($, turnId, change)
 }
 
-const addOnce = (list: string[], item: string) => (list.includes(item) ? list : [...list, item])
-
-const EDIT_TOOLS = ['Edit', 'MultiEdit', 'Write', 'NotebookEdit']
-
-// The file an edit changed, read off the call's arguments; none for any other tool.
-const editedFile = (e: ToolCallInput) => {
-  if (!EDIT_TOOLS.includes(e.tool)) {
-    return undefined
-  }
-
-  const input: Record<string, unknown> = { ...e }
-  const path = input.file_path ?? input.notebook_path
-
-  return typeof path === 'string' ? path : undefined
-}
-
-const isFailed = (result: ToolCallResult) => result.deny !== undefined || result.isError === true
-
-// The input field that says what a call works on, in the order they are tried: a
-// Bash call has a command and a description, and the command is the one to show.
-const TARGET_FIELDS = ['file_path', 'notebook_path', 'command', 'pattern', 'url', 'query', 'description', 'skill']
-
-const MAX_TARGET_LENGTH = 200
-
-const PATH_FIELDS = ['file_path', 'notebook_path']
-
-const pathSegments = (path: string) => path.split('/').filter(segment => segment !== '')
-
-// A file as `~/project/name`: the folder the session's project root sits in, or for
-// a file outside the project the folder the file sits in, then the file's name.
-const fileLabel = (path: string, projectRoot: string) => {
-  const segments = pathSegments(path)
-  const name = segments.at(-1) ?? path
-  const isInProject = !path.startsWith('/') || (projectRoot !== '' && path.startsWith(`${projectRoot}/`))
-  const folder = isInProject ? pathSegments(projectRoot).at(-1) : segments.at(-2)
-
-  return folder === undefined ? name : `~/${folder}/${name}`
-}
-
-// Absolute paths inside a command or pattern, in the style of fileLabel: the project
-// root as `~/project`, and any other home folder as `~`.
-const HOME_FOLDER = /\/(?:Users|home)\/[^/\s"']+/g
-
-const shortenPaths = (text: string, projectRoot: string) => {
-  const project = pathSegments(projectRoot).at(-1)
-  const withProject = projectRoot === '' || project === undefined ? text : text.replaceAll(projectRoot, `~/${project}`)
-
-  return withProject.replace(HOME_FOLDER, '~')
-}
-
-// What a call works on, as one short line: the first line of the field
-// TARGET_FIELDS picks, cut to MAX_TARGET_LENGTH; empty when the input has none.
-const callTarget = (input: unknown, projectRoot: string) => {
-  if (typeof input !== 'object' || input === null) {
-    return ''
-  }
-
-  const fields: Record<string, unknown> = { ...input }
-  const field = TARGET_FIELDS.find(name => typeof fields[name] === 'string')
-  const value = field === undefined ? '' : String(fields[field])
-  const isPath = field !== undefined && PATH_FIELDS.includes(field)
-  const firstLine = isPath ? fileLabel(value, projectRoot) : shortenPaths(value.split('\n')[0]?.trim() ?? '', projectRoot)
-
-  return firstLine.length > MAX_TARGET_LENGTH ? `${firstLine.slice(0, MAX_TARGET_LENGTH - 1)}…` : firstLine
-}
-
-const allCalls = (all: Turns) => Object.values(all).flatMap(turn => turn.calls)
-
-// The calls of a run that are not failed: a failed call has a red line of its own.
-const runCalls = (all: Turns, call: LiveCall) => allCalls(all).filter(other => other.runId === call.runId && other.state !== 'failed')
-
-const findCall = (all: Turns, toolUseId: string) => allCalls(all).find(call => call.id === toolUseId)
-
-// Records one tool call into the running turn once it ends: the main loop's calls by
-// id, tool and outcome, a subagent's by its id, and the file any edit that worked changed.
-const recordToolCall = async ($: EngineInterface, e: ToolCallInput, result: ToolCallResult) => {
-  const isFailedCall = isFailed(result)
-  const file = isFailedCall ? undefined : editedFile(e)
-
-  await addToRunningTurn($, turn => withEditedFile(withEndedCall(turn, e, isFailedCall), file))
-}
-
-const withEndedCall = (turn: Turn, e: ToolCallInput, isFailedCall: boolean): Turn => {
-  if (e.agentId !== undefined) {
-    return { ...turn, agentIds: addOnce(turn.agentIds, e.agentId) }
-  }
-
-  const state = isFailedCall ? 'failed' : 'done'
-
-  return {
-    ...turn,
-    toolIds: [...turn.toolIds, e.tool_use_id],
-    toolNames: [...turn.toolNames, e.tool],
-    failedCount: isFailedCall ? turn.failedCount + 1 : turn.failedCount,
-    calls: withCallState(turn.calls, e.tool_use_id, state),
-  }
-}
-
-const withEditedFile = (turn: Turn, file: string | undefined): Turn =>
-  file === undefined ? turn : { ...turn, files: addOnce(turn.files, file) }
-
-const withCallState = (calls: LiveCall[], id: string, state: LiveCall['state']) =>
-  calls.map(call => (call.id === id ? { ...call, state } : call))
-
-// One block of a model reply, in the order the model wrote it.
-type ReplyBlock = { kind: 'text'; text: string } | { kind: 'call'; id: string; tool: string; input: unknown; isServerRun: boolean }
-
-// The turn with a reply's blocks added. A call starts a new run unless the call
-// before it came with no text between; a run is under a note when any text came
-// before it in the turn. A call the API ran itself, such as the advisor, fires no
-// tool.call, so it is done and counted here, in the reply that holds it.
-const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: string): Turn => {
-  const texts = [...turn.texts]
-  const calls = [...turn.calls]
-  const serverCalls = blocks.flatMap(block => (block.kind === 'call' && block.isServerRun ? [block] : []))
-  let isAfterText = turn.isAfterText
-
-  for (const block of blocks) {
-    if (block.kind === 'text') {
-      texts.push(block.text)
-      isAfterText = true
-      continue
-    }
-
-    const previous = calls.at(-1)
-    const isNewRun = previous === undefined || isAfterText
-    calls.push({
-      id: block.id,
-      tool: block.tool,
-      target: callTarget(block.input, projectRoot),
-      runId: isNewRun ? block.id : previous.runId,
-      isNoted: texts.length > 0,
-      textsBefore: texts.length,
-      state: block.isServerRun ? 'done' : 'queued',
-    })
-    isAfterText = false
-  }
-
-  return {
-    ...turn,
-    texts,
-    calls,
-    isAfterText,
-    toolIds: [...turn.toolIds, ...serverCalls.map(block => block.id)],
-    toolNames: [...turn.toolNames, ...serverCalls.map(block => block.tool)],
-  }
-}
-
-const replyBlocks = (content: unknown[]): ReplyBlock[] =>
-  content.flatMap((block): ReplyBlock[] => {
-    const { type, text, id, name, input } = block as Record<string, unknown>
-
-    if (type === 'text' && typeof text === 'string' && text.trim().length > 0) {
-      return [{ kind: 'text', text: text.trim() }]
-    }
-
-    const isServerRun = type === 'server_tool_use'
-
-    return (type === 'tool_use' || isServerRun) && typeof id === 'string' && typeof name === 'string'
-      ? [{ kind: 'call', id, tool: name, input, isServerRun }]
-      : []
-  })
-
 // The desktop app wraps each row in its own header and expander, so a hidden row
 // there leaves the header over a blank body. The row hooks match the terminal only.
 const TERMINAL = 'terminal'
@@ -219,33 +56,6 @@ const columnsOf = (e: { viewport?: RenderViewport }) => e.viewport?.columns ?? D
 type RowEvent<Row> = Parameters<MatchedHook<'ui.render', Row>>[1]
 
 type RowNext<Row> = Parameters<MatchedHook<'ui.render', Row>>[2]
-
-const finishedTurns = (all: Turns) => Object.values(all).filter(turn => turn.durationMs !== undefined)
-
-const isFoldedTool = (all: Turns, toolUseId: string) => finishedTurns(all).some(turn => turn.toolIds.includes(toolUseId))
-
-// A text block folds only when it belongs to a finished turn and is no turn's final
-// answer and no part of the running turn: a block whose text repeats elsewhere stays.
-const isFoldedText = (all: Turns, text: string) => {
-  const key = text.trim()
-  const turnsWithText = Object.values(all).filter(turn => turn.texts.includes(key))
-
-  return turnsWithText.length > 0 && turnsWithText.every(turn => turn.durationMs !== undefined && turn.texts.at(-1) !== key)
-}
-
-// The latest finished turn whose final answer is this text block.
-const answeredTurnId = (all: Turns, text: string) =>
-  Object.entries(all).findLast(([, turn]) => turn.durationMs !== undefined && turn.texts.at(-1) === text.trim())?.[0]
-
-// The finished turn a subagent's row belongs to: a finished notice by the call that
-// started the subagent, a message from it by the answer its run ended with.
-const subagentRowTurnId = (all: Turns, row: { text: string; task?: { toolUseId?: string }; from?: unknown }) =>
-  Object.entries(all).find(
-    ([, turn]) =>
-      turn.durationMs !== undefined &&
-      ((row.task?.toolUseId !== undefined && turn.toolIds.includes(row.task.toolUseId)) ||
-        (row.from !== undefined && turn.agentAnswers.includes(row.text.trim()))),
-  )?.[0]
 
 const toggleId = (ids: string[], id: string) => (ids.includes(id) ? ids.filter(other => other !== id) : [...ids, id])
 
@@ -341,7 +151,7 @@ const trackToolCall: Hook<'tool.call'> = async ($, e, next) => {
   }
 
   const result = await next(e)
-  await recordToolCall($, e, result)
+  await addToRunningTurn($, endedCallChange(e, result))
   $.ui.invalidate('ui.render')
 
   return result
@@ -375,7 +185,7 @@ const recordTurnComplete: Hook<'turn.complete'> = async ($, e, next) => {
 
 // A subagent can answer after the turn that ran it has ended.
 const recordSubagentAnswer = async ($: EngineInterface, agentId: string, answer: string) => {
-  const ownerId = Object.entries(await read($, turns)).find(([, turn]) => turn.spawnedAgentIds.includes(agentId))?.[0]
+  const ownerId = agentOwnerId(await read($, turns), agentId)
 
   if (answer !== '' && ownerId !== undefined) {
     await changeTurn($, ownerId, owner => ({ ...owner, agentAnswers: [...owner.agentAnswers, answer] }))

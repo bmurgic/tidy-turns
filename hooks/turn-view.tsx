@@ -1,6 +1,7 @@
 import type { Elements } from 'claude-code'
 
 import type { LiveCall, Turn } from '../types'
+import { runCallsOf } from './turn-queries'
 
 // The elements a drawing here needs, from the surface's table.
 type Ui = Pick<Elements['terminal'], 'Box' | 'Text' | 'Button'>
@@ -180,7 +181,7 @@ const turnSteps = (turn: Turn): Step[] => {
       steps.push({ kind: 'failed', call })
     } else if (!placedRunIds.has(call.runId)) {
       placedRunIds.add(call.runId)
-      steps.push({ kind: 'run', calls: turn.calls.filter(other => other.runId === call.runId && other.state !== 'failed') })
+      steps.push({ kind: 'run', calls: runCallsOf(turn.calls, call.runId) })
     }
   }
 
