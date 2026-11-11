@@ -11,7 +11,7 @@ Click the line to open the turn under it. A summary comes first, then the turn's
 
 ```
 ✻ Sautéed for 7s ▾
-├─ 3 tool calls · 1 command · 1 read
+├─ 4 tool calls · 2 reads · 1 command
 ├─ 1 file changed
 ├─ Haiku 4.5 · 519 tokens
 └─ 1 failed

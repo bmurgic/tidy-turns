@@ -588,7 +588,7 @@ describe('tidy-turns', () => {
 
       const failed = await mountCall($, 'fail')
       expect(await linesOf(failed)).toEqual([])
-      expect(await failed.find({ type: 'Text', text: '  ⎿ Bash ls · failed' })).toBeDefined()
+      expect((await failed.find({ type: 'Text', text: '  ⎿ Bash ls · failed' }))?.props.color).toBe('error')
       expect(await failed.find({ type: 'Text', text: 'engine row' })).toBeUndefined()
       expect(await linesOf(await mountCall($, 'b'))).toEqual(['  ⎿ Bash ls ▸ 2 calls'])
       expect(isHidden(await (await mountCall($, 'c')).drawn())).toBe(true)

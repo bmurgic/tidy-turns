@@ -71,7 +71,7 @@ const runNote = (callCount: number, isOpen: boolean) => {
   return isOpen ? ' ▾' : ` ▸ ${callCount} calls`
 }
 
-type RunRow ={ run: LiveCall[]; isOpen: boolean; onToggle: () => void; columns: number }
+type RunRow = { run: LiveCall[]; isOpen: boolean; onToggle: () => void; columns: number }
 
 // The calls between two notes as one row: closed, the call running now and a
 // count; a click opens it to every call. A run under a note sits against it; one
@@ -103,7 +103,7 @@ type Step =
 // The turn's notes, runs, and failed calls in the order they came, then what its
 // subagents answered. The last text is the answer, which the row draws itself.
 // A run shows where its first call that did not fail came; a failed call where it came.
-export const turnSteps = (turn: Turn): Step[] => {
+const turnSteps = (turn: Turn): Step[] => {
   const notes = turn.texts.slice(0, -1)
   const steps: Step[] = []
   const placedRunIds = new Set<string>()

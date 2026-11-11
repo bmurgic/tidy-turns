@@ -154,7 +154,7 @@ const formatModel = (model: string) => {
 
 const END_REASONS: Record<string, string> = { aborted: 'interrupted', refusal: 'refused', error: 'errored' }
 
-export type SummaryGroup = { name: 'activity' | 'changes' | 'session' | 'usage' | 'problems'; text: string }
+type SummaryGroup = { name: 'activity' | 'changes' | 'session' | 'usage' | 'problems'; text: string }
 
 // The summary's groups in the order they show, each the turned-on items it has
 // something for; a group with nothing is left out.

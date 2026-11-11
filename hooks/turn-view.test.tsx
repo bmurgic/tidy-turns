@@ -61,6 +61,8 @@ describe("an open turn's work", () => {
     expect(await textOf(answer, 'tidy-turns:call:w-b')).toBe('  ⎿ Bash second ▸ 2 calls')
     expect(await textOf(answer, 'tidy-turns:note:1')).toBe('⏺ Second note.')
     expect(await textOf(answer, 'tidy-turns:agent-answer:0')).toBe('› Found it (w).')
+    // The answer row draws the answer itself, so the copy leaves it out.
+    expect(await answer.find({ key: 'tidy-turns:note:2' })).toBeUndefined()
 
     const drawn = JSON.stringify(await answer.drawn())
     const order = [
@@ -93,18 +95,8 @@ describe("an open turn's work", () => {
     await runWorkTurn($, on)
     const answer = await openAnswer($)
 
-    expect(await answer.find({ type: 'Text', text: '  ⎿ Bash false · failed' })).toBeDefined()
+    expect((await answer.find({ type: 'Text', text: '  ⎿ Bash false · failed' }))?.props.color).toBe('error')
     expect(await textOf(answer, 'tidy-turns:call:w-c')).toBe('  ⎿ Bash third')
-  })
-
-  test('keeps the rows above the line hidden while the copy shows', async ($, on) => {
-    await runWorkTurn($, on)
-    await openAnswer($)
-    const message = await $.ui.mount({ plugin: 'tidy-turns', surface: 'terminal', component: 'UserMessage', props: subagentMessage('Found it (w).\nMore detail.') })
-
-    expect(isHidden(await drawTool($, 'w-a', 'terminal'))).toBe(true)
-    expect(isHidden(await drawText($, 'First note.', 'terminal'))).toBe(true)
-    expect(isHidden(await message.drawn())).toBe(true)
   })
 
   test('closing the line removes the copy', async ($, on) => {
@@ -116,6 +108,15 @@ describe("an open turn's work", () => {
     expect(await answer.find({ key: 'tidy-turns:note:0' })).toBeUndefined()
     expect(await answer.find({ key: 'tidy-turns:call:w-b' })).toBeUndefined()
     expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▸')
+  })
+
+  test('leaves the copy out while folding is off, since the rows above already show the work', async ($, on) => {
+    await runWorkTurn($, on)
+    await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+    const answer = await openAnswer($)
+
+    expect(await answer.find({ key: 'tidy-turns:row:activity' })).toBeDefined()
+    expect(await answer.find({ key: 'tidy-turns:note:0' })).toBeUndefined()
   })
 
   test('draws the engine answer row alone while the ctrl+o transcript is open', async ($, on) => {
