@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { appendText, drawText, drawTool, isHidden, mountAnswer, storeMissing, stubEngine, subagentMessage } from './test-kit'
+import { appendText, mountAnswer, storeMissing, stubEngine } from './test-kit'
 
 describe("an open turn's work", () => {
   type Block = { text: string } | { callId: string; command: string }

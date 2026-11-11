@@ -23,11 +23,10 @@ Click the line to open the turn under it. A summary comes first, then the turn's
   ⎿ Bash false · failed
   ⎿ Edit ~/app/config.toml
 
-› The port is set in two places.
 ⏺ Done.
 ```
 
-While the turn is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close it. The line stays where it is either way, so you can open and close a turn without moving the mouse.
+While the turn is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close it. When you scroll up to an older turn, the line stays where it is, so you can open and close the turn without moving the mouse. For the newest turn at the bottom of a full screen, the line moves up by the height of what opens under it.
 
 The work under an open line is a copy the plugin draws from what it recorded: Claude's notes, each run of tool calls as one row, failed calls in red, and the first line of each subagent's answer. It has no tool output and no diffs. Click a run's row to open every call in it. Subagent answers come last, just above the answer. The rows the turn first drew above the line stay hidden.
 
