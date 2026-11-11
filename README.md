@@ -7,15 +7,9 @@ A Claude Code plugin that cleans up finished turns in the terminal. When a turn 
 ⏺ Done.
 ```
 
-Click the line to open the turn under it. A summary comes first, then the turn's work the way it looked while it ran:
+Click the line to open the turn. Its work opens above the line, the way it looked while it ran, with a summary just over the line:
 
 ```
-✻ Sautéed for 7s ▾
-├─ 3 tool calls · 1 command · 1 read
-├─ 1 file changed
-├─ Haiku 4.5 · 519 tokens
-└─ 1 failed
-
 ⏺ Let me check the config.
   ⎿ Read ~/app/config.toml ▸ 2 calls
 
@@ -24,12 +18,18 @@ Click the line to open the turn under it. A summary comes first, then the turn's
   ⎿ Edit ~/app/config.toml
 
 › The port is set in two places.
+
+├─ 3 tool calls · 1 command · 1 read
+├─ 1 file changed
+├─ Haiku 4.5 · 519 tokens
+└─ 1 failed
+✻ Sautéed for 7s ▾
 ⏺ Done.
 ```
 
-While the turn is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close it. The line stays where it is either way, so you can open and close a turn without moving the mouse.
+While the turn is open, the line is bright and its star and tree are orange. While it's closed, the line is dim. Click the line again to close it. Claude Code keeps the transcript pinned to the prompt, so the opened rows push older rows up and the line stays on the same screen line. You can open and close a turn without moving the mouse.
 
-The work under an open line is a copy the plugin draws from what it recorded: Claude's notes, each run of tool calls as one row, failed calls in red, and the first line of each subagent's answer. It has no tool output and no diffs. Click a run's row to open every call in it. Subagent answers come last, just above the answer. The rows the turn first drew above the line stay hidden.
+The opened work is a copy the plugin draws from what it recorded: Claude's notes, each run of tool calls as one row, failed calls in red, and the first line of each subagent's answer. It has no tool output and no diffs. Click a run's row to open every call in it. Subagent answers come after the rest of the work. The rows the turn drew while it ran stay hidden.
 
 ## What it changes
 

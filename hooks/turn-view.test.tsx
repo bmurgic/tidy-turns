@@ -53,7 +53,9 @@ describe("an open turn's work", () => {
 
   const textOf = async (answer: Awaited<ReturnType<typeof mountAnswer>>, key: string) => (await answer.find({ key }))?.text
 
-  test('draws the turn below the tree in order: notes, their runs, the subagent, then the answer', async ($, on) => {
+  // Claude Code pins the transcript to the prompt, so rows that grow above the
+  // line leave it, and the pointer on it, where they were.
+  test('draws the turn above its line in order: notes, their runs, the subagent, the tree, the line, then the answer', async ($, on) => {
     await runWorkTurn($, on)
     const answer = await openAnswer($)
 
@@ -64,13 +66,14 @@ describe("an open turn's work", () => {
 
     const drawn = JSON.stringify(await answer.drawn())
     const order = [
-      'tidy-turns:row:activity',
       'tidy-turns:note:0',
       'tidy-turns:call:w-b',
       'tidy-turns:note:1',
       'tidy-turns:failed:w-fail',
       'tidy-turns:call:w-c',
       'tidy-turns:agent-answer:0',
+      'tidy-turns:row:activity',
+      'tidy-turns:line',
       'engine row',
     ].map(mark => drawn.indexOf(mark))
     expect(order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))).toBe(true)
