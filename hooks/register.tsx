@@ -112,20 +112,30 @@ const findCall = (all: Turns, toolUseId: string) => allCalls(all).find(call => c
 // Records one tool call into the running turn once it ends: the main loop's calls by
 // id, tool and outcome, a subagent's by its id, and the file any edit that worked changed.
 const recordToolCall = async ($: EngineInterface, e: ToolCallInput, result: ToolCallResult) => {
-  const isMainLoop = e.agentId === undefined
   const isFailedCall = isFailed(result)
   const file = isFailedCall ? undefined : editedFile(e)
 
-  await addToRunningTurn($, turn => ({
-    ...turn,
-    toolIds: isMainLoop ? [...turn.toolIds, e.tool_use_id] : turn.toolIds,
-    toolNames: isMainLoop ? [...turn.toolNames, e.tool] : turn.toolNames,
-    failedCount: turn.failedCount + (isMainLoop && isFailedCall ? 1 : 0),
-    agentIds: e.agentId === undefined ? turn.agentIds : addOnce(turn.agentIds, e.agentId),
-    files: file === undefined ? turn.files : addOnce(turn.files, file),
-    calls: isMainLoop ? withCallState(turn.calls, e.tool_use_id, isFailedCall ? 'failed' : 'done') : turn.calls,
-  }))
+  await addToRunningTurn($, turn => withEditedFile(withEndedCall(turn, e, isFailedCall), file))
 }
+
+const withEndedCall = (turn: Turn, e: ToolCallInput, isFailedCall: boolean): Turn => {
+  if (e.agentId !== undefined) {
+    return { ...turn, agentIds: addOnce(turn.agentIds, e.agentId) }
+  }
+
+  const state = isFailedCall ? 'failed' : 'done'
+
+  return {
+    ...turn,
+    toolIds: [...turn.toolIds, e.tool_use_id],
+    toolNames: [...turn.toolNames, e.tool],
+    failedCount: isFailedCall ? turn.failedCount + 1 : turn.failedCount,
+    calls: withCallState(turn.calls, e.tool_use_id, state),
+  }
+}
+
+const withEditedFile = (turn: Turn, file: string | undefined): Turn =>
+  file === undefined ? turn : { ...turn, files: addOnce(turn.files, file) }
 
 const withCallState = (calls: LiveCall[], id: string, state: LiveCall['state']) =>
   calls.map(call => (call.id === id ? { ...call, state } : call))
