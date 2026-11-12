@@ -12,7 +12,7 @@
     {
       "name": "tidy-turns",
       "description": "Fold a finished turn's work away so only the answer shows, with a clickable summary under it",
-      "version": "0.1.0",
+      "version": "1.0.0",
       "author": {
         "name": "Brandon Murgic"
       },

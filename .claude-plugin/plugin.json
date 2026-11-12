@@ -1,6 +1,6 @@
 {
   "name": "tidy-turns",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Fold a finished turn's work away so only the answer shows, with a clickable summary under it",
   "author": {
     "name": "Brandon Murgic"
