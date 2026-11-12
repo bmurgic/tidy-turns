@@ -4,7 +4,7 @@ import type { EngineInterface, Hook, MatchedHook, Register, RenderViewport, Reso
 import type { Turn } from '../types'
 import { describeVerb, readSettings, type Settings, summaryGroups } from './summary'
 import { answeredTurnId, agentOwnerId, findCall, isFoldedText, isFoldedTool, runCalls, subagentRowTurnId } from './turn-queries'
-import { addOnce, addReplyBlocks, EMPTY_TURN, endedCallChange, replyBlocks, withCallState } from './turn-record'
+import { addOnce, addReplyBlocks, addStreamedCall, EMPTY_TURN, type StreamPlace, endedCallChange, replyBlocks, withCallState, withoutStreamedCalls } from './turn-record'
 import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy, hasTurnWork } from './turn-view'
 
 const turns = atom({ plugin: 'tidy-turns', key: 'turns' } as const, {})
@@ -193,7 +193,7 @@ const recordSubagentAnswer = async ($: EngineInterface, agentId: string, answer:
 
 const finishRunningTurn = async ($: EngineInterface, e: TurnCompleteInput) => {
   const verb = pickVerb()
-  await changeTurn($, e.turnId, turn => ({ ...turn, durationMs: e.durationMs, verb, endReason: e.reason }))
+  await changeTurn($, e.turnId, turn => ({ ...withoutStreamedCalls(turn), durationMs: e.durationMs, verb, endReason: e.reason }))
   await update($, runningTurnId, () => null)
 
   const turn = (await read($, turns))[e.turnId]
@@ -205,18 +205,36 @@ const finishRunningTurn = async ($: EngineInterface, e: TurnCompleteInput) => {
   )
 }
 
+// Records a main-loop call the model has begun to write, before the engine draws
+// its row, so the row joins the run above at once instead of showing below it
+// bare until the reply is stored.
+const recordStreamedCall = async ($: EngineInterface, id: string, tool: string, place: StreamPlace) => {
+  await addToRunningTurn($, turn => addStreamedCall(turn, id, tool, place))
+  $.ui.invalidate('ui.render')
+  debug($, `streamed call ${tool} ${id} hasText=${place.hasText} isAfterCall=${place.isAfterCall}`)
+}
+
 // Holds each text block's pieces and lets it out whole, when the next chunk of
 // another kind arrives or the response ends, so a message appears done at once.
+// On the main loop it records each call as it begins, and first drops the calls
+// an earlier response began whose reply never came.
 const releaseWholeTextBlocks: Hook<'turn.step'> = async function* ($, e, next) {
-  const stream = next(e)
+  const isMainLoop = e.agentId === undefined
   const held: HeldText = { index: -1, text: '' }
+  const place: StreamPlace = { hasText: false, isAfterCall: false }
+
+  if (isMainLoop) {
+    await addToRunningTurn($, withoutStreamedCalls)
+  }
+
+  const stream = next(e)
 
   for (;;) {
     const step = await stream.next()
 
     if (step.done) {
       yield* releaseHeld(held)
-      await recordUsage($, e.agentId === undefined, step.value)
+      await recordUsage($, isMainLoop, step.value)
 
       return step.value
     }
@@ -224,6 +242,11 @@ const releaseWholeTextBlocks: Hook<'turn.step'> = async function* ($, e, next) {
     const chunk = step.value
 
     if (chunk.kind === 'text') {
+      if (chunk.text.trim() !== '') {
+        place.hasText = true
+        place.isAfterCall = false
+      }
+
       if (chunk.index !== held.index) {
         yield* releaseHeld(held)
         held.index = chunk.index
@@ -234,6 +257,13 @@ const releaseWholeTextBlocks: Hook<'turn.step'> = async function* ($, e, next) {
     }
 
     yield* releaseHeld(held)
+
+    if (isMainLoop && chunk.kind === 'tool') {
+      await recordStreamedCall($, chunk.id, chunk.name, { ...place })
+      place.hasText = false
+      place.isAfterCall = true
+    }
+
     yield chunk
   }
 }
@@ -287,6 +317,10 @@ const drawToolUse = async ($: EngineInterface, e: RowEvent<typeof TOOL_USE_ROW>,
   }
 
   const call = findCall(all, e.props.tool_use_id)
+
+  if (call?.isStreamed === true) {
+    debug($, `draw ToolUse ${call.tool} ${call.id} while the model writes it`)
+  }
 
   if (!settings.compactLiveCalls || call === undefined) {
     return next(e)

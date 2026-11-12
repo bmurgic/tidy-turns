@@ -59,10 +59,41 @@ export const withCallState = (calls: LiveCall[], id: string, state: LiveCall['st
 // One block of a model reply, in the order the model wrote it.
 type ReplyBlock = { kind: 'text'; text: string } | { kind: 'call'; id: string; tool: string; input: unknown; isServerRun: boolean }
 
-// The turn with a reply's blocks added. A call starts a new run unless the call
-// before it came with no text between; a run is under a note when any text came
-// before it in the turn. A call the API ran itself, such as the advisor, fires no
-// tool.call, so it is done and counted here, in the reply that holds it.
+// Where a call sits: it starts a new run unless the call before it came with no
+// text between, and it is under a note when any text came before it in the turn.
+const placedCall = (previous: LiveCall | undefined, isAfterText: boolean, textCount: number, call: Pick<LiveCall, 'id' | 'tool' | 'target' | 'state'>): LiveCall => ({
+  ...call,
+  runId: previous === undefined || isAfterText ? call.id : previous.runId,
+  isNoted: textCount > 0,
+  textsBefore: textCount,
+})
+
+// What the response so far says about where a call it begins goes: a text block
+// came before it, or the call before it came in the same response with no text
+// between. The turn may hold neither yet, and may hold a text that came later.
+export type StreamPlace = { hasText: boolean; isAfterCall: boolean }
+
+// The turn with a call the model has begun to write and no reply yet holds. Its
+// target is unknown until the reply comes. A call right after another of the same
+// response joins its run, whatever text the turn stored in the meantime.
+export const addStreamedCall = (turn: Turn, id: string, tool: string, place: StreamPlace): Turn => {
+  const isStored = turn.calls.some(call => call.id === id)
+  const textCount = turn.texts.length + (place.hasText && !turn.isAfterText ? 1 : 0)
+  const isNewRun = !place.isAfterCall && (turn.isAfterText || place.hasText)
+  const call = { ...placedCall(turn.calls.at(-1), isNewRun, textCount, { id, tool, target: '', state: 'queued' }), isStreamed: true }
+
+  return isStored ? turn : { ...turn, calls: [...turn.calls, call], isAfterText: false }
+}
+
+// The turn without the calls the model began whose reply never came, such as a
+// response cut off or retried.
+export const withoutStreamedCalls = (turn: Turn): Turn =>
+  turn.calls.some(call => call.isStreamed) ? { ...turn, calls: turn.calls.filter(call => !call.isStreamed) } : turn
+
+// The turn with a reply's blocks added. A call already there from the stream
+// keeps its place and state and gains its target. A call the API ran itself,
+// such as the advisor, fires no tool.call, so it is done and counted here, in
+// the reply that holds it.
 export const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: string): Turn => {
   const texts = [...turn.texts]
   const calls = [...turn.calls]
@@ -76,17 +107,17 @@ export const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: st
       continue
     }
 
-    const previous = calls.at(-1)
-    const isNewRun = previous === undefined || isAfterText
-    calls.push({
-      id: block.id,
-      tool: block.tool,
-      target: callTarget(block.input, projectRoot),
-      runId: isNewRun ? block.id : previous.runId,
-      isNoted: texts.length > 0,
-      textsBefore: texts.length,
-      state: block.isServerRun ? 'done' : 'queued',
-    })
+    const at = calls.findIndex(call => call.id === block.id)
+    const streamed = calls[at]
+    const target = callTarget(block.input, projectRoot)
+
+    if (streamed === undefined) {
+      calls.push(placedCall(calls.at(-1), isAfterText, texts.length, { id: block.id, tool: block.tool, target, state: block.isServerRun ? 'done' : 'queued' }))
+    } else {
+      const placed = placedCall(calls[at - 1], isAfterText, texts.length, { id: block.id, tool: block.tool, target, state: streamed.state })
+      calls[at] = { ...placed, runId: streamed.runId }
+    }
+
     isAfterText = false
   }
 
