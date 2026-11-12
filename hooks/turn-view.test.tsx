@@ -40,6 +40,22 @@ describe("an open turn's work", () => {
     return answer
   }
 
+  // Every summary item off, so the line has no summary rows.
+  const NO_ITEMS = {
+    showToolCount: false,
+    showToolKinds: false,
+    showSubagents: false,
+    showFilesChanged: false,
+    showFailures: false,
+    showEndReason: false,
+    showSessionTools: false,
+    showTokens: false,
+    showModel: false,
+    showSkills: false,
+    showToolSearches: false,
+    showMcpCalls: false,
+  }
+
   const textOf = async (answer: Awaited<ReturnType<typeof mountAnswer>>, key: string) => (await answer.find({ key }))?.text
 
   test('draws the turn below the tree in order: notes, their runs, the subagent, then the answer', async ($, on) => {
@@ -101,22 +117,7 @@ describe("an open turn's work", () => {
 
   test(
     'opens the work with every summary item off, drawing the copy and no tree',
-    {
-      options: {
-        showToolCount: false,
-        showToolKinds: false,
-        showSubagents: false,
-        showFilesChanged: false,
-        showFailures: false,
-        showEndReason: false,
-        showSessionTools: false,
-        showTokens: false,
-        showModel: false,
-        showSkills: false,
-        showToolSearches: false,
-        showMcpCalls: false,
-      },
-    },
+    { options: NO_ITEMS },
     async ($, on) => {
       await runWorkTurn($, on)
       const answer = await mountAnswer($, 'All done (w).')
@@ -129,6 +130,16 @@ describe("an open turn's work", () => {
       expect(JSON.stringify(await answer.drawn())).not.toContain('tidy-turns:row:')
     },
   )
+
+  test('shows no arrow with every summary item off while folding is off, since the work already shows above', { options: NO_ITEMS }, async ($, on) => {
+    await runWorkTurn($, on)
+    await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+    const answer = await mountAnswer($, 'All done (w).')
+
+    expect(await answer.find({ type: 'Text', text: /^✻ [A-Z][a-zé]+ for 4s$/ })).toBeDefined()
+    expect(await answer.find({ key: 'tidy-turns:work' })).toBeUndefined()
+    expect(await answer.find({ type: 'Button' })).toBeUndefined()
+  })
 
   test('leaves the copy out while folding is off, since the rows above already show the work', async ($, on) => {
     await runWorkTurn($, on)
