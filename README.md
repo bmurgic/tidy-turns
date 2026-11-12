@@ -39,6 +39,10 @@ The work under an open line is a copy the plugin draws from what it recorded: Cl
 
 The desktop app draws turns its own way, so the plugin folds nothing there.
 
+## Known limitations
+
+- The advisor's `Advising using …` row stays above a finished turn's line, and it stays there when you open the turn. Claude Code draws that row without a `ui.render` event, so no plugin can hide it. The plugin still records the call and counts it with the turn's other calls. Hiding the row needs Claude Code to raise a `ToolUse` render event for calls the API runs itself, and that change is waiting on Anthropic.
+
 ## What it hooks
 
 The plugin is one hooks module, `hooks/register.tsx`. It records each turn with `hooks/turn-record.ts`, which names what each call works on with `hooks/call-target.ts`. It asks which rows fold with `hooks/turn-queries.ts`, draws with `hooks/turn-view.tsx`, and builds the summary with `hooks/summary.ts`. It hooks these events:

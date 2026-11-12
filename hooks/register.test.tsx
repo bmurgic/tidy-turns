@@ -552,6 +552,8 @@ describe('tidy-turns', () => {
       await callTools($, 'a', 'b')
 
       expect(await linesOf(await mountTool($, 'a'))).toEqual(['⏺ Bash ls ▸ 3 calls'])
+      // Claude Code 2.1.322 raises no ui.render event for the advisor's row, so this
+      // mount stands in for one it does not draw yet (README, Known limitations).
       expect(isHidden(await (await mountTool($, 'adv')).drawn())).toBe(true)
     })
 
