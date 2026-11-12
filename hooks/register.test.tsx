@@ -23,10 +23,12 @@ import {
   runRichTurn,
   runSubagentTurn,
   runToolingTurn,
+  runStep,
   runTurn,
   startSubagent,
   storeMissing,
   stubEngine,
+  stubSteps,
   subagentMessage,
   subagentNotice,
   summaryRowText,
@@ -639,6 +641,97 @@ describe('tidy-turns', () => {
       expect(await linesOf(row)).toEqual([])
       expect(await row.find({ type: 'Text', text: 'engine row' })).toBeDefined()
       expect(isHidden(await (await mountResult($)).drawn())).toBe(false)
+    })
+
+    test('shows the first call still waiting to run once the ones before it end', async ($, on) => {
+      await startTurn($, on, ['note', { callId: 'a' }, { callId: 'b', input: { command: 'second' } }, { callId: 'c', input: { command: 'third' } }])
+      await callTool($, 'a')
+
+      expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash second ▸ 3 calls'])
+    })
+
+    // A call the model is still writing, before its reply is stored, joins the row
+    // at once, so the engine's own bare row never shows below it and then jumps in.
+    describe('a call the model is still writing', () => {
+      const toolChunk = (id: string, name = 'Bash'): TurnStepChunk => ({ kind: 'tool', index: 1, id, name })
+
+      // A note and call a, run to its end; then each model request streams its chunks.
+      const startStreamedTurn = async ($: Engine, on: On, steps: TurnStepChunk[][]) => {
+        stubSteps(on, steps)
+        await startTurn($, on, ['note', { callId: 'a', input: { command: 'first' } }])
+        await callTool($, 'a')
+      }
+
+      test('takes the finished call\'s place in the row, then gains its target once stored', async ($, on) => {
+        await startStreamedTurn($, on, [[toolChunk('b'), { kind: 'input', index: 1, json: '{"command":"second"}' }]])
+        await runStep($)
+
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ▸ 2 calls'])
+        expect(isHidden(await (await mountTool($, 'b')).drawn())).toBe(true)
+
+        await appendReply($, 'live-b', [{ callId: 'b', input: { command: 'second' } }])
+
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash second ▸ 2 calls'])
+      })
+
+      test('starts a new row after a note, stored before the call or after it', async ($, on) => {
+        const read = { callId: 'c', tool: 'Read', input: { file_path: '/w/a.ts' } }
+        await startStreamedTurn($, on, [[{ kind: 'text', index: 0, text: 'Reading it.' }, toolChunk('c', 'Read')], [toolChunk('d', 'Read')]])
+        await runStep($)
+
+        expect(await linesOf(await mountTool($, 'c'))).toEqual(['  ⎿ Read'])
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash first'])
+
+        await appendReply($, 'live-c', ['note', read])
+        expect(await linesOf(await mountTool($, 'c'))).toEqual(['  ⎿ Read ~/w/a.ts'])
+
+        await callTool($, 'c', 'Read')
+        await appendText($, 'live-d', 'One more.')
+        await runStep($)
+
+        expect(await linesOf(await mountTool($, 'd'))).toEqual(['  ⎿ Read'])
+        expect(await linesOf(await mountTool($, 'c'))).toEqual(['  ⎿ Read ~/w/a.ts'])
+      })
+
+      test('keeps calls written one after another in one row when their note is stored between them', async ($, on) => {
+        await startStreamedTurn($, on, [[{ kind: 'text', index: 0, text: 'Checking.' }, toolChunk('c'), { kind: 'tool', index: 2, id: 'd', name: 'Bash' }]])
+        const stream = $.turn.step({ turnId: 'live', index: 0, model: 'claude-opus-5-5', messageCount: 1 })
+        await stream.next()
+        await stream.next()
+        await appendText($, 'live-c', 'Checking.')
+        while (!(await stream.next()).done) {}
+
+        expect(await linesOf(await mountTool($, 'c'))).toEqual(['  ⎿ Bash ▸ 2 calls'])
+        expect(isHidden(await (await mountTool($, 'd')).drawn())).toBe(true)
+      })
+
+      test("leaves a subagent's calls to the engine", async ($, on) => {
+        await startStreamedTurn($, on, [[toolChunk('x')]])
+        await runStep($, 'agent-1')
+
+        expect(await (await mountTool($, 'x')).find({ type: 'Text', text: 'engine row' })).toBeDefined()
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash first'])
+      })
+
+      test('drops a call whose reply never came at the next request', async ($, on) => {
+        await startStreamedTurn($, on, [[toolChunk('b')], []])
+        await runStep($)
+        await runStep($)
+
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash first'])
+      })
+
+      test("drops a call whose reply never came from the finished turn's work", async ($, on) => {
+        await startStreamedTurn($, on, [[toolChunk('b')]])
+        await runStep($)
+        await appendText($, 'live-z', 'Done.')
+        await finishLiveTurn($)
+        const answer = await mountAnswer($, 'Done.')
+        await answer.press({ key: 'tidy-turns:lead' })
+
+        expect(await answer.find({ key: 'tidy-turns:call:a' })).toBeDefined()
+        expect(await answer.find({ key: 'tidy-turns:call:b' })).toBeUndefined()
+      })
     })
   })
 })

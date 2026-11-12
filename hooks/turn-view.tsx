@@ -90,10 +90,11 @@ const fitLine = (line: string, suffix: string, columns: number) => {
 }
 
 // The calls a run's row shows: all of them once opened; closed, the ones running
-// now, or the latest call to start when none is.
+// now, else the next call waiting to run, else the latest call to start. A call
+// the model is still writing waits to run, so it takes the line at once.
 const shownCalls = (run: LiveCall[], isOpen: boolean) => {
   const running = run.filter(call => call.state === 'running')
-  const latest = run.findLast(call => call.state !== 'queued') ?? run[0]
+  const shown = run.find(call => call.state === 'queued') ?? run.at(-1)
 
   if (isOpen) {
     return run
@@ -103,7 +104,7 @@ const shownCalls = (run: LiveCall[], isOpen: boolean) => {
     return running
   }
 
-  return latest === undefined ? [] : [latest]
+  return shown === undefined ? [] : [shown]
 }
 
 // A call's line: after a note it hangs under it with ⎿, and with none before it

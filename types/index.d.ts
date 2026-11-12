@@ -11,6 +11,8 @@ export type LiveCall = {
   /** How many of the turn's text blocks were stored before the call, so an open turn's copy draws its run under the right note. */
   textsBefore: number
   state: 'queued' | 'running' | 'done' | 'failed'
+  /** True while the model is still writing the call and no stored reply holds it yet. */
+  isStreamed?: boolean
 }
 
 export type Turn = {

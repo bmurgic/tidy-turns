@@ -1,4 +1,4 @@
-import type { On, RenderElement } from 'claude-code'
+import type { On, RenderElement, TurnStepChunk, TurnStepInput } from 'claude-code'
 import { expect } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
@@ -98,6 +98,27 @@ export const stubEngine = (on: On) => {
 }
 
 export const appendText = ($: Engine, uuid: string, text: string) => appendModelReply($, uuid, [{ type: 'text', text }])
+
+// Streams each model request's chunks in order; a request past the list streams
+// none. The kit takes the hooks beneath the plugins only before the test first calls $.
+export const stubSteps = (on: On, steps: TurnStepChunk[][]) => {
+  let next = 0
+  on('turn.step', async function* (_$, e) {
+    for (const chunk of steps[next++] ?? []) {
+      yield chunk
+    }
+
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'tool_use', usage: null }
+  })
+}
+
+// Runs one model request of turn `live` to its end. The kit types no agentId on a
+// step; a subagent's step carries one.
+export const runStep = async ($: Engine, agentId?: string) => {
+  const input = { turnId: 'live', index: 0, model: 'claude-opus-5-5', messageCount: 1, agentId }
+  const stream = $.turn.step(input as TurnStepInput)
+  while (!(await stream.next()).done) {}
+}
 
 // One turn up to its answer: a working note, a Bash call, then the final answer.
 export const runTurn = async ($: Engine, turnId: string) => {
