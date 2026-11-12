@@ -214,6 +214,11 @@ const recordStreamedCall = async ($: EngineInterface, id: string, tool: string, 
   debug($, `streamed call ${tool} ${id} hasText=${place.hasText} isAfterCall=${place.isAfterCall}`)
 }
 
+// A piece of a note to the person: visible text, or thinking with text, which
+// Opus 5.5 writes as a note that Claude Code draws marked · summary. Hidden
+// thinking streams blank.
+const isNoteChunk = (chunk: TurnStepChunk) => (chunk.kind === 'text' || chunk.kind === 'thinking') && chunk.text.trim() !== ''
+
 // Holds each text block's pieces and lets it out whole, when the next chunk of
 // another kind arrives or the response ends, so a message appears done at once.
 // On the main loop it records each call as it begins, and first drops the calls
@@ -241,12 +246,12 @@ const releaseWholeTextBlocks: Hook<'turn.step'> = async function* ($, e, next) {
 
     const chunk = step.value
 
-    if (chunk.kind === 'text') {
-      if (chunk.text.trim() !== '') {
-        place.hasText = true
-        place.isAfterCall = false
-      }
+    if (isNoteChunk(chunk)) {
+      place.hasText = true
+      place.isAfterCall = false
+    }
 
+    if (chunk.kind === 'text') {
       if (chunk.index !== held.index) {
         yield* releaseHeld(held)
         held.index = chunk.index

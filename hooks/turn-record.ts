@@ -131,12 +131,27 @@ export const addReplyBlocks = (turn: Turn, blocks: ReplyBlock[], projectRoot: st
   }
 }
 
+// The text a block shows the person. A thinking block with text is a note Opus 5.5
+// wrote, which Claude Code draws marked · summary; hidden thinking is stored blank.
+const noteText = (block: Record<string, unknown>) => {
+  switch (block.type) {
+    case 'text':
+      return block.text
+    case 'thinking':
+      return block.thinking
+    default:
+      return undefined
+  }
+}
+
 export const replyBlocks = (content: unknown[]): ReplyBlock[] =>
   content.flatMap((block): ReplyBlock[] => {
-    const { type, text, id, name, input } = block as Record<string, unknown>
+    const fields = block as Record<string, unknown>
+    const { type, id, name, input } = fields
+    const note = noteText(fields)
 
-    if (type === 'text' && typeof text === 'string' && text.trim().length > 0) {
-      return [{ kind: 'text', text: text.trim() }]
+    if (typeof note === 'string' && note.trim().length > 0) {
+      return [{ kind: 'text', text: note.trim() }]
     }
 
     const isServerRun = type === 'server_tool_use'

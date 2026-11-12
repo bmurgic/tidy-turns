@@ -526,6 +526,49 @@ describe('tidy-turns', () => {
       expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Bash ls'])
     })
 
+    // Opus 5.5 can write a note as a thinking block with visible text. Claude Code
+    // 2.1.322 draws it as a note marked · summary; hidden thinking is stored blank.
+    describe('a note written as a thinking block', () => {
+      const SUMMARY = 'The folder holds one file.'
+
+      test('starts a new row under it, and folds it with the turn', async ($, on) => {
+        await startTurn($, on, ['note', { callId: 'a' }])
+        await appendModelReply($, 'live-b', [{ type: 'thinking', thinking: `${SUMMARY}\n\n`, signature: 's' }])
+        await appendReply($, 'live-c', [{ callId: 'b' }])
+        await callTools($, 'a', 'b')
+
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls'])
+        expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Bash ls'])
+
+        await appendText($, 'live-d', 'Done.')
+        await finishLiveTurn($)
+
+        expect(isHidden(await (await mountAnswer($, SUMMARY)).drawn())).toBe(true)
+      })
+
+      test('starts a new row when the call streams before the note is stored', async ($, on) => {
+        stubSteps(on, [[{ kind: 'thinking', index: 0, text: SUMMARY }, { kind: 'tool', index: 1, id: 'b', name: 'Bash' }]])
+        await startTurn($, on, ['note', { callId: 'a' }])
+        await callTool($, 'a')
+        await runStep($)
+
+        expect(await linesOf(await mountTool($, 'b'))).toEqual(['  ⎿ Bash'])
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls'])
+      })
+
+      test('keeps a call after hidden thinking in the row above', async ($, on) => {
+        stubSteps(on, [[{ kind: 'thinking', index: 0, text: '' }, { kind: 'tool', index: 1, id: 'b', name: 'Bash' }]])
+        await startTurn($, on, ['note', { callId: 'a' }])
+        await callTool($, 'a')
+        await appendModelReply($, 'live-b', [{ type: 'thinking', thinking: '', signature: 's' }])
+        await runStep($)
+        await appendReply($, 'live-c', [{ callId: 'b' }])
+
+        expect(await linesOf(await mountTool($, 'a'))).toEqual(['  ⎿ Bash ls ▸ 2 calls'])
+        expect(isHidden(await (await mountTool($, 'b')).drawn())).toBe(true)
+      })
+    })
+
     test('starts a new row after a message sent while the turn runs', async ($, on) => {
       await startTurn($, on, [{ callId: 'a' }])
       await $.session
