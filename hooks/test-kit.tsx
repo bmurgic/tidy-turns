@@ -1,0 +1,282 @@
+import type { On, RenderElement } from 'claude-code'
+import { expect } from 'claude-code/testing'
+import type { Engine } from 'claude-code/testing'
+
+export const SURFACES = ['terminal', 'desktop'] as const
+
+type Surface = (typeof SURFACES)[number]
+
+export const toolRow = (tool_use_id: string) => ({
+  tool_use_id,
+  tool: 'Bash',
+  input: { command: 'ls' },
+  isRunning: false,
+  isErrored: false,
+  isInterrupted: false,
+  output: { stdout: 'a', stderr: '', interrupted: false },
+})
+
+const textRow = (text: string, isFirstOfReply = false) => ({
+  text,
+  isFirstOfReply,
+})
+
+// The kit has no transcript store beneath session.append; the mod records before next.
+export const storeMissing = (error: Error) => expect(error.message).toContain('no implementation for session.append')
+
+// The kit types only this build's built-in tools and the message shapes it knows.
+export type ToolCallArgs = Parameters<Engine['tool']['call']>[0]
+
+export type AppendedMessage = Parameters<Engine['session']['append']>[0]['message']
+
+// One assistant message of the running turn, its content blocks as the model wrote them.
+export const appendModelReply = ($: Engine, uuid: string, content: unknown[]) =>
+  $.session
+    .append({
+      message: { type: 'assistant', role: 'assistant', content } as unknown as AppendedMessage,
+      door: 'response',
+      origin: { kind: 'model', model: 'claude-opus-5-5' },
+      uuid,
+    })
+    .catch(storeMissing)
+
+// A call of a tool the kit has no type for, such as an MCP tool or Agent.
+export const callUntypedTool = ($: Engine, tool: string, toolUseId: string) =>
+  $.tool.call({ tool, tool_use_id: toolUseId } as unknown as ToolCallArgs)
+
+// The kit types no agentId on turn events; a subagent's run carries one.
+export const startSubagent = ($: Engine, turnId: string, agentId: string) => {
+  const start = { text: 'explore', turnId, agentId }
+
+  return $.turn.start(start as Omit<typeof start, 'agentId'>)
+}
+
+export const completeSubagent = ($: Engine, turnId: string, agentId: string, answer: string) => {
+  const end = { answer, durationMs: 900, isAborted: false, turnId, reason: 'answer', agentId } as const
+
+  return $.turn.complete(end as Omit<typeof end, 'agentId'>)
+}
+
+// The person's prompt row; its isExpanded tells whether the ctrl+o transcript shows.
+export const mountPrompt = ($: Engine, text: string, isExpanded: boolean) =>
+  $.ui.mount({
+    plugin: 'tidy-turns',
+    surface: 'terminal',
+    component: 'UserMessage',
+    props: { text, origin: { kind: 'composer' as const }, isExpanded },
+  })
+
+// True when each mark appears in the drawn tree, after the one before it.
+export const isDrawnInOrder = (drawn: string, marks: string[]) => {
+  const order = marks.map(mark => drawn.indexOf(mark))
+
+  return order.every((at, i) => at >= 0 && (i === 0 || at > (order[i - 1] ?? 0)))
+}
+
+export const summaryRowText = async (answer: Awaited<ReturnType<typeof mountAnswer>>, group: string) =>
+  (await answer.find({ key: `tidy-turns:row:${group}` }))?.text
+
+// Stand-ins for the engine beneath the plugin.
+// Calls a test keeps running until it settles the promise, by tool_use_id.
+export const heldCalls = new Map<string, Promise<void>>()
+
+export const stubEngine = (on: On) => {
+  heldCalls.clear()
+  on('turn.start', (_$, e) => ({ turnId: e.turnId }))
+  on('tool.call', async (_$, e) => {
+    await heldCalls.get(e.tool_use_id)
+
+    return e.tool_use_id.includes('fail') ? { isError: true, result: 'boom' } : { result: { stdout: 'a', stderr: '', interrupted: false } }
+  })
+  on('ui.log', () => ({ value: undefined }))
+  on('turn.complete', (_$, e) => ({ text: e.answer }))
+  on('ui.render', ($, e) => {
+    const { Text } = $.ui.resolve(e)
+
+    return <Text>{e.component === 'ToolGroup' ? `engine group expanded=${e.props.isExpanded}` : 'engine row'}</Text>
+  })
+}
+
+export const appendText = ($: Engine, uuid: string, text: string) => appendModelReply($, uuid, [{ type: 'text', text }])
+
+// One turn up to its answer: a working note, a Bash call, then the final answer.
+export const runTurn = async ($: Engine, turnId: string) => {
+  await $.turn.start({ text: 'list files', turnId })
+  await appendText($, `${turnId}-a`, `Let me look (${turnId}).`)
+  await $.tool.call({
+    tool: 'Bash',
+    tool_use_id: `${turnId}-tool`,
+    command: 'ls',
+  })
+  await appendText($, `${turnId}-b`, `Found one file (${turnId}).`)
+}
+
+export const finishTurn = ($: Engine, turnId: string) =>
+  $.turn.complete({
+    answer: `Found one file (${turnId}).`,
+    durationMs: 4200,
+    isAborted: false,
+    turnId,
+    reason: 'answer',
+  })
+
+// A turn with something for every summary item: two reads, three edits over two
+// files, a failed command, a subagent's read, one model request, then an interrupt.
+export const runRichTurn = async ($: Engine, on: On, turnId: string) => {
+  stubHaikuStep(on)
+  await $.turn.start({ text: 'fix it', turnId })
+  await appendText($, `${turnId}-a`, `Looking (${turnId}).`)
+  await runModelRequest($, turnId)
+  await runRichCalls($, turnId)
+  await appendText($, `${turnId}-b`, `Stopped (${turnId}).`)
+  await $.turn.complete({
+    answer: `Stopped (${turnId}).`,
+    durationMs: 4200,
+    isAborted: true,
+    turnId,
+    reason: 'aborted',
+  })
+}
+
+const HAIKU_USAGE = {
+  input_tokens: 10,
+  output_tokens: 1234,
+  cache_read_input_tokens: 0,
+  cache_creation_input_tokens: 0,
+  model: 'claude-haiku-4-5-20251001',
+}
+
+// Answers each model request as Haiku 4.5 with 1234 output tokens. The kit takes
+// the hooks beneath the plugins only before the test first calls $.
+const stubHaikuStep = (on: On) =>
+  on('turn.step', async function* (_$, e) {
+    yield { kind: 'stop', stopReason: 'end_turn', usage: HAIKU_USAGE }
+
+    return { turnId: e.turnId, index: e.index, answer: '', toolUses: [], stopReason: 'end_turn', usage: HAIKU_USAGE }
+  })
+
+const runModelRequest = async ($: Engine, turnId: string) => {
+  const stream = $.turn.step({ turnId, index: 0, model: HAIKU_USAGE.model, messageCount: 1 })
+  while (!(await stream.next()).done) {}
+}
+
+// The rich turn's calls: two reads, three edits over two files, a failed command, and a subagent's read.
+const runRichCalls = async ($: Engine, turnId: string) => {
+  await $.tool.call({
+    tool: 'Read',
+    tool_use_id: `${turnId}-r1`,
+    file_path: '/w/a.ts',
+  })
+  await $.tool.call({
+    tool: 'Read',
+    tool_use_id: `${turnId}-r2`,
+    file_path: '/w/b.ts',
+  })
+  await $.tool.call({
+    tool: 'Edit',
+    tool_use_id: `${turnId}-e1`,
+    file_path: '/w/a.ts',
+    old_string: 'a',
+    new_string: 'b',
+  })
+  await $.tool.call({
+    tool: 'Edit',
+    tool_use_id: `${turnId}-e2`,
+    file_path: '/w/a.ts',
+    old_string: 'b',
+    new_string: 'c',
+  })
+  await $.tool.call({
+    tool: 'Write',
+    tool_use_id: `${turnId}-w1`,
+    file_path: '/w/b.ts',
+    content: 'b',
+  })
+  await $.tool.call({
+    tool: 'Bash',
+    tool_use_id: `${turnId}-fail`,
+    command: 'false',
+  })
+  // The kit types no agentId on a raised call; a subagent's call carries one.
+  const subagentRead = {
+    tool: 'Read',
+    tool_use_id: `${turnId}-sub`,
+    file_path: '/w/c.ts',
+    agentId: 'agent-1',
+  } as const
+  await $.tool.call(subagentRead as Omit<typeof subagentRead, 'agentId'>)
+}
+
+export const ALL_ITEMS = {
+  showToolKinds: true,
+  showSubagents: true,
+  showFilesChanged: true,
+  showFailures: true,
+  showEndReason: true,
+  showTokens: true,
+  showModel: true,
+}
+
+export const mountAnswer = ($: Engine, text: string, surface: Surface = 'terminal') =>
+  $.ui.mount({
+    plugin: 'tidy-turns',
+    surface,
+    component: 'AssistantMessage',
+    props: textRow(text),
+  })
+
+export const mountTool = ($: Engine, id: string, surface: Surface = 'terminal') =>
+  $.ui.mount({
+    plugin: 'tidy-turns',
+    surface,
+    component: 'ToolUse',
+    props: toolRow(id),
+  })
+
+export const drawTool = async ($: Engine, id: string, surface: Surface) => (await mountTool($, id, surface)).drawn()
+
+export const drawText = async ($: Engine, text: string, surface: Surface) => (await mountAnswer($, text, surface)).drawn()
+
+// A turn that writes a note, runs an Explore subagent through an Agent call, then
+// answers. The subagent's run raises its own turn.start and turn.complete.
+export const runSubagentTurn = async ($: Engine, turnId: string) => {
+  await $.turn.start({ text: 'list files', turnId })
+  await appendText($, `${turnId}-a`, `Let me look (${turnId}).`)
+  await startSubagent($, `${turnId}-sub`, `${turnId}-agent`)
+  await completeSubagent($, `${turnId}-sub`, `${turnId}-agent`, ` Found it (${turnId}).\n`)
+  await callUntypedTool($, 'Agent', `${turnId}-agent-call`)
+  await appendText($, `${turnId}-b`, `Found one file (${turnId}).`)
+  await finishTurn($, turnId)
+}
+
+export const subagentNotice = (turnId: string) => ({
+  text: 'Agent "Explore" finished',
+  origin: { kind: 'task-notification' as const },
+  isExpanded: false,
+  task: { id: `${turnId}-agent`, status: 'completed', toolUseId: `${turnId}-agent-call`, durationMs: 900 },
+})
+
+export const subagentMessage = (text: string) => ({ text, origin: { kind: 'peer' as const }, isExpanded: false, from: { name: 'Explore' } })
+
+export const isHidden = (tree: RenderElement) => tree.type === 'Box' && tree.props?.display === 'none'
+
+// A turn of skill, tool search, MCP and session tool calls, and one read.
+export const runToolingTurn = async ($: Engine, turnId: string) => {
+  // An MCP tool's name is the server's.
+  const call = (tool: string, id: string) => callUntypedTool($, tool, `${turnId}-${id}`)
+
+  await $.turn.start({ text: 'tidy up', turnId })
+  await appendText($, `${turnId}-a`, `Looking (${turnId}).`)
+  await call('Read', 'read')
+  await call('Skill', 'skill')
+  await call('ToolSearch', 'search-1')
+  await call('ToolSearch', 'search-2')
+  await call('mcp__context7__query-docs', 'mcp')
+  await call('Monitor', 'monitor')
+  await call('SendMessage', 'message-1')
+  await call('SendMessage', 'message-2')
+  await appendText($, `${turnId}-b`, `Tidied (${turnId}).`)
+  await $.turn.complete({ answer: `Tidied (${turnId}).`, durationMs: 4200, isAborted: false, turnId, reason: 'answer' })
+}
+
+export const TOOLING_ITEMS = { showSessionTools: true, showSkills: true, showToolSearches: true, showMcpCalls: true }
