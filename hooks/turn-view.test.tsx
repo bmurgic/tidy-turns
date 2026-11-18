@@ -68,6 +68,8 @@ describe("an open turn's work", () => {
     return mountAnswer($, 'All done (w).')
   }
 
+  const mountPlainAnswerAt = ($: Engine, columns: number) => mountAnswer($, 'All done (w).', 'terminal', { columns, rows: 30 })
+
   const textOf = async (answer: Awaited<ReturnType<typeof mountAnswer>>, key: string) => (await answer.find({ key }))?.text
 
   test('draws the turn below the tree in order: notes, their runs, the subagent, then the answer', async ($, on) => {
@@ -160,6 +162,20 @@ describe("an open turn's work", () => {
     expect((await answer.find({ key: 'tidy-turns:line' }))?.props.width).toBe(76)
   })
 
+  test('fits the time on the plain line with no room kept for an arrow, and draws the line bare without it', { options: NO_ITEMS }, async ($, on) => {
+    const wide = await mountPlainAnswer($, on)
+    const lead = (await wide.find({ type: 'Text', text: /^✻ / }))?.text.slice('✻ '.length) ?? ''
+    // ✻ and a space, the lead, one space, the time, and the right margin.
+    const fitColumns = 2 + lead.length + 1 + '2:41 PM'.length + 4
+    const fits = await mountPlainAnswerAt($, fitColumns)
+    const tooNarrow = await mountPlainAnswerAt($, fitColumns - 1)
+
+    expect((await fits.find({ key: 'tidy-turns:time' }))?.text).toBe('2:41 PM')
+    expect(await tooNarrow.find({ key: 'tidy-turns:time' })).toBeUndefined()
+    expect(await tooNarrow.find({ key: 'tidy-turns:line' })).toBeUndefined()
+    expect((await tooNarrow.find({ type: 'Text', text: /^✻ / }))?.text).toBe(`✻ ${lead}`)
+  })
+
   test('leaves the copy out while folding is off, since the rows above already show the work', async ($, on) => {
     await runWorkTurn($, on)
     await turnFoldingOff($)
@@ -182,7 +198,6 @@ describe("an open turn's work", () => {
     await mountPrompt($, 'look around', false)
   })
 })
-
 
 describe('the end time at the right of the line', () => {
   const ONE_DAY_MS = 24 * 60 * 60 * 1000

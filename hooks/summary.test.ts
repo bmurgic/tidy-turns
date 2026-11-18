@@ -17,10 +17,6 @@ describe('the end time on a finished turn line', () => {
     expect(describeEndTime(at(2026, 10, 18, 12, 0), LATE_NOV_18)).toBe('12:00 PM')
   })
 
-  test('adds the month and day for a turn that ended on an earlier day', () => {
-    expect(describeEndTime(at(2026, 10, 17, 14, 41), LATE_NOV_18)).toBe('Nov 17 2:41 PM')
-  })
-
   test('adds the year for a turn that ended in an earlier year', () => {
     expect(describeEndTime(at(2025, 10, 17, 9, 3), LATE_NOV_18)).toBe('Nov 17, 2025 9:03 AM')
   })

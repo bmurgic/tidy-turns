@@ -212,7 +212,6 @@ const joinItems = (items: string[]) => items.filter(item => item !== '').join(' 
 
 export const describeVerb = (turn: Turn) => `${turn.verb ?? 'Worked'} for ${formatDuration(turn.durationMs ?? 0)}`
 
-
 const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
 
 // A 12-hour clock time with no seconds, such as 2:41 PM. Built by hand, not
