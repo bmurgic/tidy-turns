@@ -2,7 +2,7 @@ import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Hook, MatchedHook, Register, RenderViewport, ResolveInput, TurnCompleteInput, TurnStepChunk, TurnStepResult } from 'claude-code'
 
 import type { Turn } from '../types'
-import { describeVerb, readSettings, type Settings, summaryGroups } from './summary'
+import { describeEndTime, describeVerb, readSettings, type Settings, summaryGroups } from './summary'
 import { answeredTurnId, agentOwnerId, findCall, isFoldedText, isFoldedTool, runCalls, subagentRowTurnId } from './turn-queries'
 import { addOnce, addReplyBlocks, addStreamedCall, EMPTY_TURN, type StreamPlace, endedCallChange, replyBlocks, withCallState, withoutStreamedCalls } from './turn-record'
 import { DEFAULT_COLUMNS, drawAnswerLine, drawFailedCall, drawRun, drawTurnCopy, hasTurnWork } from './turn-view'
@@ -193,7 +193,9 @@ const recordSubagentAnswer = async ($: EngineInterface, agentId: string, answer:
 
 const finishRunningTurn = async ($: EngineInterface, e: TurnCompleteInput) => {
   const verb = pickVerb()
-  await changeTurn($, e.turnId, turn => ({ ...withoutStreamedCalls(turn), durationMs: e.durationMs, verb, endReason: e.reason }))
+  // turn.complete carries no time, so the end is when the hook sees it.
+  const endedAt = await $.clock.now()
+  await changeTurn($, e.turnId, turn => ({ ...withoutStreamedCalls(turn), durationMs: e.durationMs, verb, endReason: e.reason, endedAt }))
   await update($, runningTurnId, () => null)
 
   const turn = (await read($, turns))[e.turnId]
@@ -437,12 +439,15 @@ const drawAnswer = async ($: EngineInterface, e: RowEvent<typeof ASSISTANT_MESSA
 
   // The rows above the line stay folded while its summary is open.
   const isOpen = (await read($, openTurnIds)).includes(turnId)
+  const columns = columnsOf(e)
   const summary = drawAnswerLine(ui, {
     lead: describeVerb(turn),
+    endTime: turn.endedAt === undefined ? undefined : describeEndTime(turn.endedAt, await $.clock.now()),
     rows: summaryGroups(turn, settings),
     hasWork: isFoldingOn && hasTurnWork(turn),
     isOpen,
     onToggle: () => toggleSummary($, turnId),
+    columns,
   })
 
   // Open, the turn's work draws under the tree, the way it looked while it ran.
@@ -452,7 +457,7 @@ const drawAnswer = async ($: EngineInterface, e: RowEvent<typeof ASSISTANT_MESSA
         turn,
         openRunIds: await read($, openRunIds),
         onToggleRun: runId => toggleRun($, runId),
-        columns: columnsOf(e),
+        columns,
       })
     : null
 

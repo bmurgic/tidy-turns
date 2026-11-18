@@ -3,14 +3,14 @@
 A Claude Code plugin that cleans up finished turns in the terminal. When a turn ends, its tool calls and working notes fold away. You see one line, then the answer:
 
 ```
-✻ Sautéed for 7s ▸
+✻ Sautéed for 7s ▸                                   2:41 PM
 ⏺ Done.
 ```
 
 Click the line to open the turn under it. A summary comes first, then the turn's work the way it looked while it ran:
 
 ```
-✻ Sautéed for 7s ▾
+✻ Sautéed for 7s ▾                                   2:41 PM
 ├─ 4 tool calls · 2 reads · 1 command
 ├─ 1 file changed
 ├─ Haiku 4.5 · 519 tokens
@@ -35,6 +35,7 @@ The work under an open line is a copy the plugin draws from what it recorded: Cl
 - Each finished turn's tool calls and notes fold away.
 - While a turn runs, Claude's notes stay. The tool calls between two notes share one dim row that shows the call running now, such as `  ⎿ Edit src/app.rs`. When Claude starts writing the next call, the row switches to it right away. It shows the tool first, such as `  ⎿ Bash`, and adds the target once Claude finishes the call. Calls that run at once get a line each. Click the row to open every call of that run, and click it again to close it. The `⎿` shows only for calls that come after a note. With no note before them, the row starts with `⏺` instead. A call's output is never drawn. A call that fails or is interrupted gets its own red line, such as `⏺ Bash false · failed`. The row folds away with the rest when the turn ends. Turn off `compactLiveCalls` to see every call as Claude Code draws it.
 - The `✻ Verb for 7s` line moves above the answer and replaces Claude Code's own line under it.
+- The right end of that line shows when the answer finished, in your computer's local time, such as `2:41 PM`. A turn from an earlier day adds the date, such as `Nov 17 2:41 PM`, and a turn from an earlier year adds the year too.
 - Replies appear whole when each text block ends, not word by word. This one applies on every surface, not only the terminal.
 
 The desktop app draws turns its own way, so the plugin folds nothing there.

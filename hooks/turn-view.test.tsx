@@ -2,7 +2,7 @@ import type { On } from 'claude-code'
 import { describe, expect, test } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
-import { appendModelReply, appendText, completeSubagent, isDrawnInOrder, mountAnswer, mountPrompt, startSubagent, stubEngine } from './test-kit'
+import { appendModelReply, appendText, completeSubagent, finishTurn, isDrawnInOrder, mountAnswer, mountPrompt, runTurn, startSubagent, stubEngine } from './test-kit'
 
 describe("an open turn's work", () => {
   type Block = { text: string } | { callId: string; command: string }
@@ -141,6 +141,17 @@ describe("an open turn's work", () => {
     expect(await answer.find({ type: 'Button' })).toBeUndefined()
   })
 
+  test('shows the end time on the plain line of a turn with nothing to open', { options: NO_ITEMS }, async ($, on) => {
+    await runWorkTurn($, on)
+    await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+    const answer = await mountAnswer($, 'All done (w).')
+
+    expect((await answer.find({ key: 'tidy-turns:time' }))?.text).toBe('2:41 PM')
+    expect((await answer.find({ type: 'Text', text: '2:41 PM' }))?.props.dimColor).toBe(true)
+    expect(await answer.find({ type: 'Button' })).toBeUndefined()
+    expect((await answer.find({ key: 'tidy-turns:line' }))?.props.width).toBe(76)
+  })
+
   test('leaves the copy out while folding is off, since the rows above already show the work', async ($, on) => {
     await runWorkTurn($, on)
     await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
@@ -164,3 +175,75 @@ describe("an open turn's work", () => {
   })
 })
 
+
+describe('the end time at the right of the line', () => {
+  const ONE_DAY_MS = 24 * 60 * 60 * 1000
+
+  const finishedAnswer = async ($: Engine, on: On, columns?: number) => {
+    stubEngine(on)
+    await runTurn($, 't')
+    await finishTurn($, 't')
+
+    return mountAnswer($, 'Found one file (t).', 'terminal', columns === undefined ? undefined : { columns, rows: 30 })
+  }
+
+  test('shows the local time the answer finished, the line stretched to the right margin', async ($, on) => {
+    const answer = await finishedAnswer($, on)
+    const line = await answer.find({ key: 'tidy-turns:line' })
+
+    expect((await answer.find({ key: 'tidy-turns:time' }))?.text).toBe('2:41 PM')
+    expect(line?.props.width).toBe(76)
+    expect(line?.props.justifyContent).toBe('space-between')
+  })
+
+  test('adds the date once the day has passed', async ($, on) => {
+    const clock = stubEngine(on)
+    await runTurn($, 't')
+    await finishTurn($, 't')
+    await clock.advance(ONE_DAY_MS)
+    const answer = await mountAnswer($, 'Found one file (t).')
+
+    expect((await answer.find({ key: 'tidy-turns:time' }))?.text).toBe('Nov 18 2:41 PM')
+  })
+
+  test('opens and closes the turn on a click, dim while closed and bright while open', async ($, on) => {
+    const answer = await finishedAnswer($, on)
+
+    expect((await answer.find({ key: 'tidy-turns:time' }))?.props.dimColor).toBe(true)
+
+    await answer.press({ key: 'tidy-turns:time' })
+
+    expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▾')
+    expect((await answer.find({ key: 'tidy-turns:time' }))?.props.dimColor).toBe(false)
+
+    await answer.press({ key: 'tidy-turns:time' })
+
+    expect((await answer.find({ key: 'tidy-turns:work' }))?.text).toBe(' ▸')
+  })
+
+  test('drops the time on a terminal too narrow for it, so the line never wraps', async ($, on) => {
+    const wide = await finishedAnswer($, on)
+    const lead = (await wide.find({ key: 'tidy-turns:lead' }))?.text ?? ''
+    // ✻ and a space, the lead, the arrow, one space, the time, and the right margin.
+    const fitColumns = 2 + lead.length + 2 + 1 + '2:41 PM'.length + 4
+    const fits = await mountAnswer($, 'Found one file (t).', 'terminal', { columns: fitColumns, rows: 30 })
+    const tooNarrow = await mountAnswer($, 'Found one file (t).', 'terminal', { columns: fitColumns - 1, rows: 30 })
+
+    expect((await fits.find({ key: 'tidy-turns:time' }))?.text).toBe('2:41 PM')
+    expect(await tooNarrow.find({ key: 'tidy-turns:time' })).toBeUndefined()
+    expect((await tooNarrow.find({ key: 'tidy-turns:lead' }))?.text).toBe(lead)
+  })
+
+  test('draws the line as before for a turn stored without an end time', async ($, on) => {
+    // Stores each turn without endedAt, as the version before this one did.
+    on('state.set', { plugin: 'tidy-turns', key: 'turns' }, (_$, e, next) =>
+      next({ ...e, value: Object.fromEntries(Object.entries(e.value).map(([turnId, { endedAt: _endedAt, ...turn }]) => [turnId, turn])) }),
+    )
+    const answer = await finishedAnswer($, on)
+    const line = await answer.find({ key: 'tidy-turns:line' })
+
+    expect(await answer.find({ key: 'tidy-turns:time' })).toBeUndefined()
+    expect(line?.props.width).toBeUndefined()
+    expect(line?.text).toBe(`✻ ${(await answer.find({ key: 'tidy-turns:lead' }))?.text} ▸`)
+  })
+})

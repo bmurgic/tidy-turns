@@ -30,14 +30,40 @@ const LINE_HOVER = { color: CLAUDE_ORANGE, dimColor: false, bold: true, inverse:
 type SummaryRow = { name: string; text: string }
 
 // hasWork: the turn has a copy of its work to draw under the line once opened.
-type AnswerLine = { lead: string; rows: SummaryRow[]; hasWork: boolean; isOpen: boolean; onToggle: () => void }
+// endTime: when the answer finished, as the line shows it; absent on a turn stored
+// by an older version. columns: the terminal's width.
+type AnswerLine = {
+  lead: string
+  endTime?: string
+  rows: SummaryRow[]
+  hasWork: boolean
+  isOpen: boolean
+  onToggle: () => void
+  columns: number
+}
+
+// The cells the star and the space after it take, and the arrow with the space before it.
+const STAR_WIDTH = 2
+const ARROW_WIDTH = 2
+
+// The end time, when the line has room for it after one space; never a wrap.
+const fittedEndTime = ({ lead, endTime, columns }: AnswerLine, arrowWidth: number) => {
+  if (endTime === undefined) {
+    return undefined
+  }
+
+  return STAR_WIDTH + lead.length + arrowWidth + 1 + endTime.length <= columns - ROW_MARGIN ? endTime : undefined
+}
 
 // The Worked for line over a finished turn's answer, and under it the summary as a
 // tree a click opens and closes. A turn with no summary and no work to copy has
-// nothing to open, so no arrow and no click. Each row sits in a keyed Box, its own hover scope.
-export const drawAnswerLine = (ui: Ui, { lead, rows, hasWork, isOpen, onToggle }: AnswerLine) => {
+// nothing to open, so no arrow and no click. The end time sits at the right edge
+// of the line. Each row sits in a keyed Box, its own hover scope.
+export const drawAnswerLine = (ui: Ui, answerLine: AnswerLine) => {
+  const { lead, rows, hasWork, isOpen, onToggle, columns } = answerLine
   const isOpenable = rows.length > 0 || hasWork
-  const line = isOpenable ? drawOpenableLine(ui, { lead, isOpen, onToggle }) : <ui.Text dimColor>✻ {lead}</ui.Text>
+  const time = fittedEndTime(answerLine, isOpenable ? ARROW_WIDTH : 0)
+  const line = isOpenable ? drawOpenableLine(ui, { lead, time, isOpen, onToggle, columns }) : drawPlainLine(ui, { lead, time, columns })
 
   return (
     <ui.Box flexDirection="column" alignSelf="flex-start">
@@ -47,22 +73,59 @@ export const drawAnswerLine = (ui: Ui, { lead, rows, hasWork, isOpen, onToggle }
   )
 }
 
+// A line with a time spans the row to the margin, the time pushed to the right.
+const timedLineLayout = (columns: number) => ({ width: columns - ROW_MARGIN, justifyContent: 'space-between' }) as const
+
+type OpenableLine = { lead: string; time?: string; isOpen: boolean; onToggle: () => void; columns: number }
+
 // Closed, the line is dim. Open, it is bright and its star and tree are
 // orange: a Button takes no color, so the star is a Text of its own. One
-// keyed Box holds the line, so it lights as one under the pointer.
-const drawOpenableLine = (ui: Ui, { lead, isOpen, onToggle }: Omit<AnswerLine, 'rows' | 'hasWork'>) => (
-  <ui.Box key="tidy-turns:line">
+// keyed Box holds the line, its time included, so it lights as one under the
+// pointer; the Box around the left side has no key, so it adds no hover scope.
+const drawOpenableLine = (ui: Ui, { lead, time, isOpen, onToggle, columns }: OpenableLine) => {
+  const left = [
     <ui.Text color={isOpen ? CLAUDE_ORANGE : undefined} dimColor={!isOpen} hover={LINE_HOVER}>
       ✻{' '}
-    </ui.Text>
+    </ui.Text>,
     <ui.Button key="tidy-turns:lead" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={onToggle}>
       {lead}
-    </ui.Button>
+    </ui.Button>,
     <ui.Button key="tidy-turns:work" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={onToggle}>
       {isOpen ? ' ▾' : ' ▸'}
-    </ui.Button>
-  </ui.Box>
-)
+    </ui.Button>,
+  ]
+
+  if (time === undefined) {
+    return <ui.Box key="tidy-turns:line">{left}</ui.Box>
+  }
+
+  return (
+    <ui.Box key="tidy-turns:line" {...timedLineLayout(columns)}>
+      <ui.Box>{left}</ui.Box>
+      <ui.Button key="tidy-turns:time" plain dimColor={!isOpen} hover={LINE_HOVER} onPress={onToggle}>
+        {time}
+      </ui.Button>
+    </ui.Box>
+  )
+}
+
+type PlainLine = { lead: string; time?: string; columns: number }
+
+// A line with nothing to open takes no click. A Text keeps no key, so a Box holds the time's.
+const drawPlainLine = (ui: Ui, { lead, time, columns }: PlainLine) => {
+  if (time === undefined) {
+    return <ui.Text dimColor>✻ {lead}</ui.Text>
+  }
+
+  return (
+    <ui.Box key="tidy-turns:line" {...timedLineLayout(columns)}>
+      <ui.Text dimColor>✻ {lead}</ui.Text>
+      <ui.Box key="tidy-turns:time">
+        <ui.Text dimColor>{time}</ui.Text>
+      </ui.Box>
+    </ui.Box>
+  )
+}
 
 type SummaryRowLine = { row: SummaryRow; isLast: boolean; onToggle: () => void }
 

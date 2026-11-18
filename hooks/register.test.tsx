@@ -85,7 +85,7 @@ describe('tidy-turns', () => {
       const body = await answer.find({ type: 'Text', text: 'engine row' })
 
       expect(lead !== undefined).toBe(isFoldingSurface)
-      expect(line?.text).toBe(isFoldingSurface ? `✻ ${lead?.text} ▸` : undefined)
+      expect(line?.text).toBe(isFoldingSurface ? `✻ ${lead?.text} ▸2:41 PM` : undefined)
       expect(details !== undefined).toBe(isFoldingSurface)
       expect(body !== undefined).toBe(true)
     })
