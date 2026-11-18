@@ -1,5 +1,5 @@
-import type { On, RenderElement, TurnStepChunk, TurnStepInput } from 'claude-code'
-import { expect } from 'claude-code/testing'
+import type { On, RenderElement, RenderViewport, TurnStepChunk, TurnStepInput } from 'claude-code'
+import { expect, mock } from 'claude-code/testing'
 import type { Engine } from 'claude-code/testing'
 
 export const SURFACES = ['terminal', 'desktop'] as const
@@ -80,8 +80,13 @@ export const summaryRowText = async (answer: Awaited<ReturnType<typeof mountAnsw
 // Calls a test keeps running until it settles the promise, by tool_use_id.
 export const heldCalls = new Map<string, Promise<void>>()
 
+// The time the kit's clock reads: 2:41 PM on Nov 18, 2026, local wherever the tests run.
+const FIXED_NOW = new Date(2026, 10, 18, 14, 41).getTime()
+
+// Returns the kit's clock, for a test that moves it.
 export const stubEngine = (on: On) => {
   heldCalls.clear()
+  const clock = mock.clock(on, { now: FIXED_NOW })
   on('turn.start', (_$, e) => ({ turnId: e.turnId }))
   on('tool.call', async (_$, e) => {
     await heldCalls.get(e.tool_use_id)
@@ -95,6 +100,8 @@ export const stubEngine = (on: On) => {
 
     return <Text>{e.component === 'ToolGroup' ? `engine group expanded=${e.props.isExpanded}` : 'engine row'}</Text>
   })
+
+  return clock
 }
 
 export const appendText = ($: Engine, uuid: string, text: string) => appendModelReply($, uuid, [{ type: 'text', text }])
@@ -238,12 +245,14 @@ export const ALL_ITEMS = {
   showModel: true,
 }
 
-export const mountAnswer = ($: Engine, text: string, surface: Surface = 'terminal') =>
+// viewport: what the surface measured; absent, the mod fits its lines to 80 columns.
+export const mountAnswer = ($: Engine, text: string, surface: Surface = 'terminal', viewport?: RenderViewport) =>
   $.ui.mount({
     plugin: 'tidy-turns',
     surface,
     component: 'AssistantMessage',
     props: textRow(text),
+    viewport,
   })
 
 export const mountTool = ($: Engine, id: string, surface: Surface = 'terminal') =>

@@ -44,6 +44,8 @@ export type Turn = {
   durationMs?: number
   /** The past-tense verb its Worked for line uses, picked by `turn.complete`. */
   verb?: string
+  /** When the main loop's turn completed, in epoch milliseconds (UTC), set by `turn.complete`; the line shows it in local time. Absent on a turn stored by an older version. */
+  endedAt?: number
   /** Why the turn ended, set by `turn.complete`. */
   endReason?: 'answer' | 'aborted' | 'refusal' | 'error'
 }

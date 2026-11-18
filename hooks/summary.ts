@@ -211,3 +211,34 @@ const problemItems = (turn: Turn, settings: Settings) => [
 const joinItems = (items: string[]) => items.filter(item => item !== '').join(' · ')
 
 export const describeVerb = (turn: Turn) => `${turn.verb ?? 'Worked'} for ${formatDuration(turn.durationMs ?? 0)}`
+
+const MONTH_NAMES = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+// A 12-hour clock time with no seconds, such as 2:41 PM. Built by hand, not
+// with toLocaleTimeString, whose newer ICU data puts a narrow no-break space before PM.
+const formatClockTime = (date: Date) => {
+  const hours = date.getHours()
+  const minutes = String(date.getMinutes()).padStart(2, '0')
+
+  return `${hours % 12 === 0 ? 12 : hours % 12}:${minutes} ${hours < 12 ? 'AM' : 'PM'}`
+}
+
+// When a turn ended, in the machine's local time: the time alone for today, the
+// month and day for an earlier day, and the year too for an earlier year. Both
+// arguments are epoch milliseconds; local time comes in only here, at draw time.
+export const describeEndTime = (endedAt: number, now: number) => {
+  const ended = new Date(endedAt)
+  const today = new Date(now)
+  const time = formatClockTime(ended)
+  const monthDay = `${MONTH_NAMES[ended.getMonth()]} ${ended.getDate()}`
+
+  if (ended.getFullYear() !== today.getFullYear()) {
+    return `${monthDay}, ${ended.getFullYear()} ${time}`
+  }
+
+  if (ended.getMonth() !== today.getMonth() || ended.getDate() !== today.getDate()) {
+    return `${monthDay} ${time}`
+  }
+
+  return time
+}
