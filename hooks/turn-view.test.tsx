@@ -56,6 +56,18 @@ describe("an open turn's work", () => {
     showMcpCalls: false,
   }
 
+  // The /tidy-turns command, which turns folding off from its default of on.
+  const turnFoldingOff = ($: Engine) =>
+    $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+
+  // A turn with nothing to open: every summary item off, and folding off so its work shows above.
+  const mountPlainAnswer = async ($: Engine, on: On) => {
+    await runWorkTurn($, on)
+    await turnFoldingOff($)
+
+    return mountAnswer($, 'All done (w).')
+  }
+
   const textOf = async (answer: Awaited<ReturnType<typeof mountAnswer>>, key: string) => (await answer.find({ key }))?.text
 
   test('draws the turn below the tree in order: notes, their runs, the subagent, then the answer', async ($, on) => {
@@ -132,9 +144,7 @@ describe("an open turn's work", () => {
   )
 
   test('shows no arrow with every summary item off while folding is off, since the work already shows above', { options: NO_ITEMS }, async ($, on) => {
-    await runWorkTurn($, on)
-    await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
-    const answer = await mountAnswer($, 'All done (w).')
+    const answer = await mountPlainAnswer($, on)
 
     expect(await answer.find({ type: 'Text', text: /^✻ [A-Z][a-zé]+ for 4s$/ })).toBeDefined()
     expect(await answer.find({ key: 'tidy-turns:work' })).toBeUndefined()
@@ -142,9 +152,7 @@ describe("an open turn's work", () => {
   })
 
   test('shows the end time on the plain line of a turn with nothing to open', { options: NO_ITEMS }, async ($, on) => {
-    await runWorkTurn($, on)
-    await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
-    const answer = await mountAnswer($, 'All done (w).')
+    const answer = await mountPlainAnswer($, on)
 
     expect((await answer.find({ key: 'tidy-turns:time' }))?.text).toBe('2:41 PM')
     expect((await answer.find({ type: 'Text', text: '2:41 PM' }))?.props.dimColor).toBe(true)
@@ -154,7 +162,7 @@ describe("an open turn's work", () => {
 
   test('leaves the copy out while folding is off, since the rows above already show the work', async ($, on) => {
     await runWorkTurn($, on)
-    await $.command.run({ command: 'tidy-turns', args: '', origin: { kind: 'composer' }, presentation: { isFullscreen: true, columns: 80 } })
+    await turnFoldingOff($)
     const answer = await openAnswer($)
 
     expect(await answer.find({ key: 'tidy-turns:row:activity' })).toBeDefined()
